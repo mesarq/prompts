@@ -20,13 +20,14 @@ private val apiJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 @Serializable data class ItemTag(val tag_id:String,val tags:Tag?=null)
 @Serializable data class Category(val id:String,val name:String,val color:String?=null,val is_system:Boolean=false)
 @Serializable data class Tag(val id:String,val name:String,val color:String?=null)
-@Serializable data class Collection(val id:String,val name:String,val description:String?=null,val color:String?=null)
+@Serializable data class VaultCollection(val id:String,val name:String,val description:String?=null,val color:String?=null)
 
 class LinkVaultApi {
     private suspend fun token():String=Supabase.accessToken() ?: error("Please sign in again.")
     private fun errorMessage(p:JsonObject,f:String)=p["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull ?: f
     private suspend fun request(method:HttpMethod,path:String,params:Map<String,String> = emptyMap(),body:JsonObject?=null):JsonObject {
-        val response=Supabase.http.request("$apiBase$path") {
+        val response=Supabase.http.request {
+            url("$apiBase$path")
             this.method=method; header(HttpHeaders.Authorization,"Bearer ${token()}")
             params.forEach{(k,v)->parameter(k,v)}
             if(body!=null){contentType(ContentType.Application.Json);setBody(body.toString())}
@@ -63,7 +64,7 @@ class LinkVaultApi {
     suspend fun tags()=array<Tag>(request(HttpMethod.Get,"/tags"))
     suspend fun createTag(name:String)=one<Tag>(request(HttpMethod.Post,"/tags",body=obj{put("name",name)}))
     suspend fun deleteTag(id:String)=request(HttpMethod.Delete,"/tags/$id")
-    suspend fun collections()=array<Collection>(request(HttpMethod.Get,"/collections"))
-    suspend fun createCollection(name:String,description:String="")=one<Collection>(request(HttpMethod.Post,"/collections",body=obj{put("name",name);put("description",description)}))
+    suspend fun collections()=array<VaultCollection>(request(HttpMethod.Get,"/collections"))
+    suspend fun createCollection(name:String,description:String="")=one<VaultCollection>(request(HttpMethod.Post,"/collections",body=obj{put("name",name);put("description",description)}))
     suspend fun deleteCollection(id:String)=request(HttpMethod.Delete,"/collections/$id")
 }

@@ -138,7 +138,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var categories by remember { mutableStateOf<List<Category>>(emptyList()) }
     var tags by remember { mutableStateOf<List<Tag>>(emptyList()) }
-    var collections by remember { mutableStateOf<List<Collection>>(emptyList()) }
+    var collections by remember { mutableStateOf<List<VaultCollection>>(emptyList()) }
     var selectedCategory by remember { mutableStateOf<String?>(null) }
     var selectedCollection by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
@@ -152,7 +152,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var menuItem by remember { mutableStateOf<LinkItem?>(null) }
     var addCollectionDialog by remember { mutableStateOf(false) }
     var addTagDialog by remember { mutableStateOf(false) }
-    var trashMode by remember { mutableStateOf(false) }\n    var sharedPrefill by remember { mutableStateOf("") }\n    var noteParentId by remember { mutableStateOf<String?>(null) }
+    var trashMode by remember { mutableStateOf(false) }
+    var sharedPrefill by remember { mutableStateOf("") }\n    var noteParentId by remember { mutableStateOf<String?>(null) }
     var trashed by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var snackbar = remember { SnackbarHostState() }
 
@@ -279,7 +280,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
         AlertDialog(onDismissRequest={menuItem=null},title={Text(item.title ?: item.url ?: "Saved item")},
             text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick={categoryItem=item;menuItem=null}) { Text("Change category") }
-                TextButton(onClick={editItem=item;menuItem=null}) { Text("Edit details / note") }\n                if(item.type=="link") TextButton(onClick={noteParentId=item.id; addDialog=true; menuItem=null}) { Text("Add a note about this link") }
+                TextButton(onClick={editItem=item;menuItem=null}) { Text("Edit details / note") }
+                if(item.type=="link") TextButton(onClick={noteParentId=item.id; addDialog=true; menuItem=null}) { Text("Add a note about this link") }
                 TextButton(onClick={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) });menuItem=null }}) { Text(if(item.is_favorite)"Remove favorite" else "Add to favorites") }
                 TextButton(onClick={launchReload {
                     api.deleteItem(item.id);menuItem=null
@@ -293,7 +295,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
 }
 
 @Composable
-private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<Collection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
+private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<VaultCollection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
     val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
     Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().clickable{onOpen()}) {
         Column(Modifier.padding(14.dp)) {
@@ -342,7 +344,7 @@ private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:
 }
 
 @Composable
-private fun MorePage(tags:List<Tag>,collections:List<Collection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit) {
+private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit) {
     Column(Modifier.fillMaxSize()) {
         Text("Collections",fontWeight=FontWeight.SemiBold)
         Button(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth()) { Text("Create collection") }
@@ -374,7 +376,7 @@ private fun NameDialog(title:String,label:String,initial:String="",onDismiss:()-
 }
 
 @Composable
-private fun AddItemDialog(categories:List<Category>,collections:List<Collection>,initialUrl:String,parentId:String?,onDismiss:()->Unit,onSave:(String,String,String,String?,String?,String,String?)->Unit) {
+private fun AddItemDialog(categories:List<Category>,collections:List<VaultCollection>,initialUrl:String,parentId:String?,onDismiss:()->Unit,onSave:(String,String,String,String?,String?,String,String?)->Unit) {
     var type by remember { mutableStateOf("link") }; var title by remember { mutableStateOf("") }
     var value by remember { mutableStateOf(initialUrl) }; var category by remember { mutableStateOf<String?>(null) }
     var collection by remember { mutableStateOf<String?>(null) }; var tags by remember { mutableStateOf("") }
