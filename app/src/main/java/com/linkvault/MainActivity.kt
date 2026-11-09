@@ -238,7 +238,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             else { put("url", value); collectionId?.let { put("collection_id", it) } }
         }
         localDao.putRecord(VaultRecordEntity(cacheUserId, "item", id, Json.encodeToString(item)))
-        localDao.enqueue(SyncOutboxEntity(UUID.randomUUID().toString(), cacheUserId, "item", "create", null, null, payload.toString()))
+        localDao.enqueue(SyncOutboxEntity(UUID.randomUUID().toString(), cacheUserId, "item", "create", id, null, payload.toString()))
         offline = true
         message = "Saved on this device. It will sync when you're back online."
         SyncScheduler.enqueue(context)
