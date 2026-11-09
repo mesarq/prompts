@@ -136,6 +136,14 @@ class MainActivity : ComponentActivity() {
 private suspend fun fetchSharedPageTitle(url: String): String? {
     val host = Uri.parse(url).host.orEmpty().lowercase()
     if (host != "reddit.com" && !host.endsWith(".reddit.com")) return null
+    val embedTitle = runCatching {
+        val response = Supabase.http.get("https://www.reddit.com/oembed?url=${Uri.encode(url)}&format=json") {
+            header("User-Agent", "LinkVault/0.9 (Android)")
+            header("Accept", "application/json")
+        }.bodyAsText()
+        Json.parseToJsonElement(response).jsonObject["title"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
+    if (!embedTitle.isNullOrBlank()) return embedTitle
     val html = runCatching {
         Supabase.http.get(url) {
             header("User-Agent", "LinkVault/0.9 (Android)")
@@ -150,7 +158,7 @@ private suspend fun fetchSharedPageTitle(url: String): String? {
     val raw = patterns.firstNotNullOfOrNull { it.find(html)?.groupValues?.getOrNull(1) }
         ?.replace(Regex("\\s+"), " ")?.trim()
     val decoded = raw?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
-    return decoded?.removeSuffix(" : r/Reddit")?.takeIf {
+    return decoded?.replace(Regex("""\\s*:\\s*r/[^|]+$""", RegexOption.IGNORE_CASE), "")?.takeIf {
         it.isNotBlank() && !it.equals("reddit - dive into anything", ignoreCase = true)
     }
 }
@@ -527,10 +535,10 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                 TextButton(onClick={launchReload {
                     deleteItemResilient(item);menuItem=null
                     val result=snackbar.showSnackbar("Moved to Recently deleted",actionLabel="Undo")
-                    if(result==SnackbarResult.ActionPerformed) api.restoreItem(item.id)
+                    if(result==SnackbarResult.ActionPerformed) deleteItemResilient(item, restore=true)
                     reload()
                 }}) { Text("Move to Recently deleted",color=Color(0xFFFF8A80)) }
-                if(trashMode) TextButton(onClick={launchReload { api.restoreItem(item.id);menuItem=null }}) { Text("Restore") }
+                if(trashMode) TextButton(onClick={launchReload { deleteItemResilient(item, restore=true);menuItem=null }}) { Text("Restore") }
             }},confirmButton={TextButton(onClick={menuItem=null}){Text("Close")}})
     }
 }
