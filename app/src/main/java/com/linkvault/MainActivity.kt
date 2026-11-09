@@ -13,6 +13,8 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,6 +41,7 @@ import com.linkvault.data.*
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -235,7 +238,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             message = e.message ?: "Couldn't refresh. Showing saved offline copy."
         } finally { busy=false }
     }
-    LaunchedEffect(page, selectedCategory, selectedCollection, query, trashMode) { reload() }
+    LaunchedEffect(page, selectedCategory, selectedCollection, query, trashMode) { delay(300); reload() }
     LaunchedEffect(sharedText) {
         if (!sharedText.isNullOrBlank()) { val url=normalizeLink(sharedText); if(url!=null) { sharedPrefill=url; addDialog=true; message="Shared link received."; }; onSharedConsumed() }
     }
@@ -292,7 +295,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                 OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true, shape=RoundedCornerShape(22.dp),
                     leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search your vault…")})
                 Spacer(Modifier.height(8.dp))
-                if(page==Page.Home) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                if(page==Page.Home) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected=selectedCategory==null,onClick={selectedCategory=null},label={Text("All")})
                     categories.forEach { c -> FilterChip(selected=selectedCategory==c.id,onClick={selectedCategory=if(selectedCategory==c.id)null else c.id},label={Text(c.name)}) }
                 }
