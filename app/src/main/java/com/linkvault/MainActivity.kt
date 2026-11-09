@@ -31,11 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.linkvault.data.*
 import io.github.jan.supabase.auth.auth
@@ -53,12 +55,13 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonNull
 import java.util.UUID
 
-private val Ink = Color(0xFF0A0B10)
-private val Panel = Color(0xFF151722)
-private val PanelRaised = Color(0xFF1D2030)
-private val Accent = Color(0xFFB9A7FF)
-private val Mint = Color(0xFF8CE5D0)
-private val Muted = Color(0xFFA5A8B8)
+private val Ink = Color(0xFF101419)
+private val Panel = Color(0xFF1B2229)
+private val PanelRaised = Color(0xFF242D34)
+private val Accent = Color(0xFF9EE7C1)
+private val Mint = Color(0xFF9EE7C1)
+private val Muted = Color(0xFFA3B0B9)
+private val TextPrimary = Color(0xFFF3F6F8)
 
 class MainActivity : ComponentActivity() {
     private var sharedText by mutableStateOf<String?>(null)
@@ -137,12 +140,12 @@ private fun normalizeLink(raw: String): String? {
 @Composable
 private fun LinkVaultTheme(content: @Composable () -> Unit) {
     val scheme = darkColorScheme(
-        primary = Accent, onPrimary = Color(0xFF21163F),
-        secondary = Mint, onSecondary = Color(0xFF082D27),
-        tertiary = Color(0xFFFFC58A), background = Ink,
+        primary = Accent, onPrimary = Color(0xFF14271F),
+        secondary = Mint, onSecondary = Color(0xFF14271F),
+        tertiary = Color(0xFFE8C18D), background = Ink,
         surface = Panel, surfaceVariant = PanelRaised,
-        onBackground = Color(0xFFF5F2FF), onSurface = Color(0xFFF5F2FF),
-        onSurfaceVariant = Muted, outline = Color(0xFF424456)
+        onBackground = TextPrimary, onSurface = TextPrimary,
+        onSurfaceVariant = Muted, outline = Color(0xFF3A454D)
     )
     val shapes = Shapes(
         extraSmall = RoundedCornerShape(10.dp),
@@ -336,37 +339,35 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             FloatingActionButton(onClick={ addDialog=true }, containerColor=Accent, contentColor=Ink) { Icon(Icons.Default.Add, "Add") }
         },
         bottomBar={
-            NavigationBar(containerColor=Panel, tonalElevation=8.dp) {
-                NavigationBarItem(selected=page==Page.Home, onClick={page=Page.Home; trashMode=false}, icon={Icon(Icons.Default.Home,null)}, label={Text("Home")})
-                NavigationBarItem(selected=page==Page.Categories, onClick={page=Page.Categories; trashMode=false}, icon={Icon(Icons.Default.Folder,null)}, label={Text("Categories")})
+            NavigationBar(containerColor=Panel, tonalElevation=0.dp) {
+                NavigationBarItem(selected=page==Page.Home, onClick={page=Page.Home; trashMode=false; selectedCategory=null; selectedCollection=null}, icon={Icon(Icons.Default.Home,null)}, label={Text("Home")})
+                NavigationBarItem(selected=page==Page.Categories, onClick={page=Page.Categories; trashMode=false}, icon={Icon(Icons.Default.FolderOpen,null)}, label={Text("Organize")})
                 NavigationBarItem(selected=page==Page.Notes, onClick={page=Page.Notes; trashMode=false}, icon={Icon(Icons.Default.Description,null)}, label={Text("Notes")})
-                NavigationBarItem(selected=page==Page.Favorites, onClick={page=Page.Favorites; trashMode=false}, icon={Icon(Icons.Default.Favorite,null)}, label={Text("Favorites")})
+                NavigationBarItem(selected=page==Page.Favorites, onClick={page=Page.Favorites; trashMode=false}, icon={Icon(Icons.Default.Star,null)}, label={Text("Saved")})
                 NavigationBarItem(selected=page==Page.More, onClick={page=Page.More; trashMode=false}, icon={Icon(Icons.Default.MoreHoriz,null)}, label={Text("More")})
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=18.dp)) {
-            Surface(
-                modifier=Modifier.fillMaxWidth().padding(top=12.dp,bottom=14.dp),
-                shape=RoundedCornerShape(28.dp),
-                color=PanelRaised
-            ) {
-                Row(Modifier.background(Brush.horizontalGradient(listOf(Color(0xFF27213F), PanelRaised, PanelRaised))).padding(horizontal=18.dp, vertical=18.dp),
-                    verticalAlignment=Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("LinkVault", style=MaterialTheme.typography.headlineLarge, fontWeight=FontWeight.ExtraBold)
-                        Text(if(offline) "Offline · showing cached library" else "Your personal corner of the internet.", color=Muted, style=MaterialTheme.typography.bodyMedium)
-                    }
-                    IconButton(onClick=onSignOut) { Icon(Icons.Default.AccountCircle, "Account", tint=Accent) }
+        Column(Modifier.fillMaxSize().padding(padding).background(Ink).padding(horizontal=18.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top=18.dp,bottom=16.dp),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement=Arrangement.spacedBy(3.dp)) {
+                    Text(if(page==Page.Home) "YOUR LIBRARY" else "LINKVAULT", color=Muted, style=MaterialTheme.typography.labelSmall, fontWeight=FontWeight.Bold, letterSpacing=1.5.sp)
+                    Text(when { trashMode -> "Recently deleted"; page==Page.Home -> "Everything worth keeping."; page==Page.Notes -> "Your notes"; page==Page.Favorites -> "Your saved picks"; page==Page.Categories -> "Organize your vault"; else -> "Your spaces" },
+                        style=MaterialTheme.typography.headlineSmall, fontWeight=FontWeight.Bold, color=TextPrimary)
                 }
+                IconButton(onClick=onSignOut) { Icon(Icons.Default.AccountCircle, "Account", tint=Muted) }
             }
             if(page==Page.Home || page==Page.Favorites || page==Page.Notes || trashMode) {
-                OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true, shape=RoundedCornerShape(22.dp),
-                    leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search your vault…")})
-                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true, shape=RoundedCornerShape(18.dp),
+                    leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search everything…")},
+                    trailingIcon={if(query.isNotBlank()) ({IconButton(onClick={query=""}){Icon(Icons.Default.Close,"Clear search")}}) else null},
+                    colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=Accent, cursorColor=Accent, unfocusedBorderColor=Color(0xFF354149)))
+                Spacer(Modifier.height(12.dp))
                 if(page==Page.Home) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected=selectedCategory==null,onClick={selectedCategory=null},label={Text("All")})
-                    categories.forEach { c -> FilterChip(selected=selectedCategory==c.id,onClick={selectedCategory=if(selectedCategory==c.id)null else c.id},label={Text(c.name)}) }
+                    FilterChip(selected=selectedCategory==null && selectedCollection==null,onClick={selectedCategory=null;selectedCollection=null},label={Text("All")})
+                    FilterChip(selected=selectedCategory!=null,onClick={selectedCategory=null},label={Text("Categories")})
+                    FilterChip(selected=selectedCollection!=null,onClick={selectedCollection=null},label={Text("Collections")})
+                    FilterChip(selected=false,onClick={page=Page.Favorites},label={Text("★ Favorites")})
                 }
             }
             message?.let { Text(it,color=if(offline) Color(0xFFFFC46B) else Muted,modifier=Modifier.padding(vertical=5.dp),style=MaterialTheme.typography.bodySmall) }
@@ -511,29 +512,34 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
 @Composable
 private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<VaultCollection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
     val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
-    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(26.dp),modifier=Modifier.fillMaxWidth().border(1.dp,Color.White.copy(alpha=.055f),RoundedCornerShape(26.dp)).animateContentSize().clickable{onOpen()}) {
-        Column(Modifier.padding(14.dp)) {
-            if(!item.thumbnail_url.isNullOrBlank()) {
-                AsyncImage(model=item.thumbnail_url,contentDescription="Link preview",modifier=Modifier.fillMaxWidth().height(148.dp),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
-                Spacer(Modifier.height(10.dp))
-            }
-            Row(verticalAlignment=Alignment.CenterVertically) {
-                Icon(if(item.type=="note") Icons.Default.Description else Icons.Default.Language,null,tint=Accent)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(item.title?.takeIf{it.isNotBlank()} ?: item.site_name ?: item.url ?: "Untitled note",fontWeight=FontWeight.SemiBold,maxLines=2)
+    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(22.dp),modifier=Modifier.fillMaxWidth().border(1.dp,Color.White.copy(alpha=.045f),RoundedCornerShape(22.dp)).animateContentSize().clickable{onOpen()}) {
+        Column(Modifier.padding(13.dp), verticalArrangement=Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment=Alignment.Top, horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                if(!item.thumbnail_url.isNullOrBlank()) {
+                    AsyncImage(model=item.thumbnail_url,contentDescription="Link preview",modifier=Modifier.size(width=104.dp,height=92.dp).clip(RoundedCornerShape(14.dp)),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
+                } else {
+                    Surface(shape=RoundedCornerShape(14.dp),color=PanelRaised,modifier=Modifier.size(54.dp)) {
+                        Box(contentAlignment=Alignment.Center) { Icon(if(item.type=="note") Icons.Default.Description else Icons.Default.Language,null,tint=if(item.type=="note") Color(0xFFC6C5F5) else Accent,modifier=Modifier.size(24.dp)) }
+                    }
+                }
+                Column(Modifier.weight(1f), verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                    Text(if(item.type=="note") "PERSONAL NOTE" else (item.site_name ?: "SAVED LINK").uppercase(),color=Muted,style=MaterialTheme.typography.labelSmall,letterSpacing=1.sp,maxLines=1)
+                    Text(item.title?.takeIf{it.isNotBlank()} ?: item.site_name ?: item.url ?: "Untitled note",fontWeight=FontWeight.SemiBold,maxLines=2,style=MaterialTheme.typography.titleMedium,color=TextPrimary)
                     Text(item.site_name ?: item.url ?: "Personal note",color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1)
                 }
-                IconButton(onClick=onFavorite){Icon(if(item.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,null,tint=if(item.is_favorite) Color(0xFFFF91B5) else Muted)}
-                IconButton(onClick=onMenu){Icon(Icons.Default.MoreVert,null,tint=Muted)}
+                Column(horizontalAlignment=Alignment.CenterHorizontally) {
+                    IconButton(onClick=onFavorite,modifier=Modifier.size(36.dp)){Icon(if(item.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,null,tint=if(item.is_favorite) Color(0xFFFF91B5) else Muted,modifier=Modifier.size(20.dp))}
+                    IconButton(onClick=onMenu,modifier=Modifier.size(36.dp)){Icon(Icons.Default.MoreVert,null,tint=Muted,modifier=Modifier.size(20.dp))}
+                }
             }
             val summary=item.description ?: item.content
-            if(!summary.isNullOrBlank()) Text(summary,color=Muted,maxLines=if(item.type=="note") 5 else 3,style=MaterialTheme.typography.bodyMedium,modifier=Modifier.padding(top=8.dp))
-            if(item.type=="link") Text("Tap to preview · notes & details",color=Accent.copy(alpha=.9f),style=MaterialTheme.typography.labelSmall,modifier=Modifier.padding(top=6.dp))
-            Row(Modifier.padding(top=10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                AssistChip(onClick={},label={Text(category)})
-                item.collection_id?.let { id-> collections.firstOrNull{it.id==id}?.let { AssistChip(onClick={},label={Text(it.name)}) } }
-                item.item_tags?.forEach { it.tags?.let { tag->AssistChip(onClick={},label={Text("#"+tag.name)}) } }
+            if(!summary.isNullOrBlank()) Text(summary,color=Muted,maxLines=2,style=MaterialTheme.typography.bodyMedium)
+            Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                Surface(shape=RoundedCornerShape(50),color=PanelRaised) { Text(category,color=Muted,style=MaterialTheme.typography.labelSmall,modifier=Modifier.padding(horizontal=10.dp,vertical=6.dp)) }
+                item.collection_id?.let { id-> collections.firstOrNull{it.id==id}?.let { Surface(shape=RoundedCornerShape(50),color=PanelRaised) { Text(it.name,color=Muted,style=MaterialTheme.typography.labelSmall,modifier=Modifier.padding(horizontal=10.dp,vertical=6.dp)) } } }
+                item.item_tags?.firstOrNull()?.tags?.let { tag -> Text("#${tag.name}",color=Accent,style=MaterialTheme.typography.labelSmall) }
+                Spacer(Modifier.weight(1f))
+                if(item.type=="link") Icon(Icons.Default.ArrowOutward,null,tint=Muted,modifier=Modifier.size(16.dp))
             }
         }
     }
