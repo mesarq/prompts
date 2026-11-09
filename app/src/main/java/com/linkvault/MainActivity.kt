@@ -9,7 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.animateContentSize
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -323,6 +323,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                 }
             }
         }
+    }
     }
 
     if(addDialog) AddItemDialog(categories,collections,initialUrl=sharedPrefill,parentId=noteParentId,onDismiss={addDialog=false; noteParentId=null},onSave={type,title,value,cat,col,tagnames,parentId->
