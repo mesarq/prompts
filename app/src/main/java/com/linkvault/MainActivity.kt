@@ -54,7 +54,6 @@ private val PanelRaised = Color(0xFF1D2030)
 private val Accent = Color(0xFFB9A7FF)
 private val Mint = Color(0xFF8CE5D0)
 private val Muted = Color(0xFFA5A8B8)
-private const val CACHE = "linkvault-cache"
 
 class MainActivity : ComponentActivity() {
     private var sharedText by mutableStateOf<String?>(null)
@@ -74,7 +73,7 @@ class MainActivity : ComponentActivity() {
                     signedIn -> VaultScreen(sharedText, { sharedText = null }, {
                         lifecycleScope.launch {
                             Supabase.client.auth.signOut()
-                            getSharedPreferences("linkvault-cache", MODE_PRIVATE).edit().clear().apply()
+                            OfflineStore(this@MainActivity).close()
                             signedIn = false
                         }
                     })
@@ -193,6 +192,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val api = remember { LinkVaultApi() }
+    val offlineStore = remember { OfflineStore(context) }
+    val cacheUserId = Supabase.client.auth.currentSessionOrNull()?.user?.id ?: "signed-out"
     var page by remember { mutableStateOf(Page.Home) }
     var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var categories by remember { mutableStateOf<List<Category>>(emptyList()) }
@@ -226,12 +227,12 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
         try {
             items = api.listItems(query, selectedCategory, page==Page.Favorites, if(page==Page.Notes) "note" else null, selectedCollection, trashMode)
             offline = false
-            context.getSharedPreferences(CACHE, Context.MODE_PRIVATE).edit().putString("items", Json.encodeToString(items)).apply()
+            offlineStore.saveSnapshot(cacheUserId, Json.encodeToString(items))
             categories = api.categories(); tags = api.tags(); collections = api.collections()
             if (trashMode) trashed = items
             message = null
         } catch (e:Exception) {
-            val cached = context.getSharedPreferences(CACHE, Context.MODE_PRIVATE).getString("items", null)
+            val cached = offlineStore.loadSnapshot(cacheUserId)
             if (cached != null) {
                 items = runCatching { Json.decodeFromString<List<LinkItem>>(cached) }.getOrDefault(emptyList())
                 offline = true
