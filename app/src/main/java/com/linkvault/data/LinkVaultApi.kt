@@ -15,7 +15,7 @@ private val apiJson = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     val description:String?=null, val content:String?=null, val category_id:String?=null,
     val collection_id:String?=null, val is_favorite:Boolean=false, val site_name:String?=null,
     val thumbnail_url:String?=null, val favicon_url:String?=null, val metadata_status:String?=null,
-    val created_at:String?=null, val deleted_at:String?=null, val item_tags:List<ItemTag>?=null
+    val created_at:String?=null, val deleted_at:String?=null, val parent_item_id:String?=null, val item_tags:List<ItemTag>?=null
 )
 @Serializable data class ItemTag(val tag_id:String,val tags:Tag?=null)
 @Serializable data class Category(val id:String,val name:String,val color:String?=null,val is_system:Boolean=false)
