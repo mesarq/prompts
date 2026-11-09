@@ -53,6 +53,14 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
                 pending.forEach { row ->
                     val result = byId[row.operationId]?.jsonObject
                     if (result?.get("success")?.jsonPrimitive?.booleanOrNull == true) {
+                        if (row.action == "create" && row.entityId != null) {
+                            val remote = result["data"]?.jsonObject
+                            val remoteId = remote?.get("id")?.jsonPrimitive?.contentOrNull
+                            if (remoteId != null) {
+                                dao.deleteRecord(userId, row.entity, row.entityId)
+                                dao.putRecord(VaultRecordEntity(userId, row.entity, remoteId, remote.toString()))
+                            }
+                        }
                         dao.acknowledge(row.operationId)
                     } else {
                         val error = result?.get("error")?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull
