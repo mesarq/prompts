@@ -360,7 +360,6 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             if(page==Page.Home || page==Page.Favorites || page==Page.Notes || trashMode) {
                 OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true, shape=RoundedCornerShape(18.dp),
                     leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search everything…")},
-                    trailingIcon={if(query.isNotBlank()) ({IconButton(onClick={query=""}){Icon(Icons.Default.Close,"Clear search")}}) else null},
                     colors=OutlinedTextFieldDefaults.colors(focusedBorderColor=Accent, cursorColor=Accent, unfocusedBorderColor=Color(0xFF354149)))
                 Spacer(Modifier.height(12.dp))
                 if(page==Page.Home) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
