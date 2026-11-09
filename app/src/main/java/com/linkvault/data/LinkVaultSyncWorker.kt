@@ -110,7 +110,7 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
             state = SyncStateEntity(userId, cursor ?: state.cursor, System.currentTimeMillis(), true)
             dao.saveSyncState(state)
             pages++
-            continuePull = if (full) truncated else hasMore
+            continuePull = if (full) true else hasMore
             if (truncated) error("Initial sync is larger than the current snapshot page; refusing to advance past missing records")
         } while (continuePull && pages < 20)
     }
