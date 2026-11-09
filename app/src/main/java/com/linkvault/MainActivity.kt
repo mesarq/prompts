@@ -53,6 +53,9 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonNull
+import io.ktor.client.request.get
+import io.ktor.client.request.header
+import io.ktor.client.statement.bodyAsText
 import java.util.UUID
 
 private val Ink = Color(0xFF101419)
@@ -127,6 +130,28 @@ class MainActivity : ComponentActivity() {
         return runCatching {
             contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText().take(200_000) } ?: uri.toString()
         }.getOrDefault(uri.toString())
+    }
+}
+
+private suspend fun fetchSharedPageTitle(url: String): String? {
+    val host = Uri.parse(url).host.orEmpty().lowercase()
+    if (host != "reddit.com" && !host.endsWith(".reddit.com")) return null
+    val html = runCatching {
+        Supabase.http.get(url) {
+            header("User-Agent", "LinkVault/0.9 (Android)")
+            header("Accept", "text/html,application/xhtml+xml")
+        }.bodyAsText()
+    }.getOrNull().orEmpty()
+    val patterns = listOf(
+        Regex("<meta[^>]+property=[\\\"']og:title[\\\"'][^>]+content=[\\\"']([^\\\"']+)[\\\"']", RegexOption.IGNORE_CASE),
+        Regex("<meta[^>]+content=[\\\"']([^\\\"']+)[\\\"'][^>]+property=[\\\"']og:title[\\\"']", RegexOption.IGNORE_CASE),
+        Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+    )
+    val raw = patterns.firstNotNullOfOrNull { it.find(html)?.groupValues?.getOrNull(1) }
+        ?.replace(Regex("\\s+"), " ")?.trim()
+    val decoded = raw?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
+    return decoded?.removeSuffix(" : r/Reddit")?.takeIf {
+        it.isNotBlank() && !it.equals("reddit - dive into anything", ignoreCase = true)
     }
 }
 
@@ -612,10 +637,19 @@ private fun AddItemDialog(categories:List<Category>,collections:List<VaultCollec
     var type by remember { mutableStateOf("link") }; var title by remember { mutableStateOf("") }
     var value by remember { mutableStateOf(initialUrl) }; var category by remember { mutableStateOf<String?>(null) }
     var collection by remember { mutableStateOf<String?>(null) }; var tags by remember { mutableStateOf("") }
+    var titleLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(value, type) {
+        if (type == "link" && title.isBlank() && normalizeLink(value) != null) {
+            titleLoading = true
+            val fetched = runCatching { fetchSharedPageTitle(normalizeLink(value)!!) }.getOrNull()
+            if (title.isBlank() && !fetched.isNullOrBlank()) title = fetched
+            titleLoading = false
+        }
+    }
     AlertDialog(onDismissRequest=onDismiss,title={Text(if(type=="note")"New note" else "Save a link")},
         text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row { FilterChip(selected=type=="link",onClick={type="link"},label={Text("Link")});Spacer(Modifier.width(8.dp));FilterChip(selected=type=="note",onClick={type="note"},label={Text("Note")}) }
-            OutlinedTextField(title,{title=it},label={Text("Title")},singleLine=true,modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(title,{title=it},label={Text(if(titleLoading) "Title · fetching Reddit title…" else "Title")},singleLine=true,modifier=Modifier.fillMaxWidth())
             OutlinedTextField(value,{value=it},label={Text(if(type=="note")"Write your note" else "URL")},modifier=Modifier.fillMaxWidth(),minLines=if(type=="note")6 else 1,maxLines=if(type=="note")12 else 2)
             var expanded by remember { mutableStateOf(false) }
             Box { OutlinedButton(onClick={expanded=true}){Text(categories.firstOrNull{it.id==category}?.name ?: "Uncategorized")};DropdownMenu(expanded,{expanded=false}){categories.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={category=c.id;expanded=false})}}}
