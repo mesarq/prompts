@@ -60,6 +60,9 @@ interface LocalVaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putRecord(record: VaultRecordEntity)
 
+    @Query("DELETE FROM vault_records WHERE userId = :userId AND recordType = :type AND recordId = :id")
+    suspend fun deleteRecord(userId: String, type: String, id: String)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun putRecords(records: List<VaultRecordEntity>)
 
