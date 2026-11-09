@@ -193,6 +193,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     val scope = rememberCoroutineScope()
     val api = remember { LinkVaultApi() }
     val offlineStore = remember { OfflineStore(context) }
+    val localDao = remember { LocalDatabase.get(context).vaultDao() }
     val cacheUserId = Supabase.client.auth.currentSessionOrNull()?.user?.id ?: "signed-out"
     var page by remember { mutableStateOf(Page.Home) }
     var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
@@ -226,17 +227,26 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
         busy = true
         try {
             items = api.listItems(query, selectedCategory, page==Page.Favorites, if(page==Page.Notes) "note" else null, selectedCollection, trashMode)
+            categories = api.categories(); tags = api.tags(); collections = api.collections()
+            // Persist the latest server snapshot locally before displaying it as synchronized.
+            localDao.putRecords(items.map { VaultRecordEntity(cacheUserId, "item", it.id, Json.encodeToString(it), it.deleted_at != null) } +
+                categories.map { VaultRecordEntity(cacheUserId, "category", it.id, Json.encodeToString(it)) } +
+                tags.map { VaultRecordEntity(cacheUserId, "tag", it.id, Json.encodeToString(it)) } +
+                collections.map { VaultRecordEntity(cacheUserId, "collection", it.id, Json.encodeToString(it)) })
             offline = false
             offlineStore.saveSnapshot(cacheUserId, Json.encodeToString(items))
-            categories = api.categories(); tags = api.tags(); collections = api.collections()
+            SyncScheduler.enqueue(context)
             if (trashMode) trashed = items
             message = null
         } catch (e:Exception) {
+            val localItems = runCatching { localDao.records(cacheUserId, "item").map { Json.decodeFromString<LinkItem>(it.payload) } }.getOrDefault(emptyList())
             val cached = offlineStore.loadSnapshot(cacheUserId)
-            if (cached != null) {
-                items = runCatching { Json.decodeFromString<List<LinkItem>>(cached) }.getOrDefault(emptyList())
-                offline = true
-            }
+            items = if (localItems.isNotEmpty()) localItems else cached?.let { runCatching { Json.decodeFromString<List<LinkItem>>(it) }.getOrDefault(emptyList()) } ?: emptyList()
+            categories = runCatching { localDao.records(cacheUserId, "category").map { Json.decodeFromString<Category>(it.payload) } }.getOrDefault(emptyList())
+            tags = runCatching { localDao.records(cacheUserId, "tag").map { Json.decodeFromString<Tag>(it.payload) } }.getOrDefault(emptyList())
+            collections = runCatching { localDao.records(cacheUserId, "collection").map { Json.decodeFromString<VaultCollection>(it.payload) } }.getOrDefault(emptyList())
+            offline = true
+            if (trashMode) trashed = items.filter { it.deleted_at != null }
             message = e.message ?: "Couldn't refresh. Showing saved offline copy."
         } finally { busy=false }
     }
