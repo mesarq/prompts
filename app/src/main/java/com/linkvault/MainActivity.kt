@@ -74,7 +74,22 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return null
         val values = mutableListOf<String>()
         when (intent.action) {
-            Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(values::add)
+            Intent.ACTION_SEND -> {
+                intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(values::add)
+                intent.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT)?.toString()?.let(values::add)
+                intent.dataString?.let(values::add)
+                intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) {
+                    clip.getItemAt(i).text?.toString()?.let(values::add)
+                    clip.getItemAt(i).uri?.let { values.add(it.toString()) }
+                } }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT)?.forEach { values.add(it.toString()) }
+                intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) {
+                    clip.getItemAt(i).text?.toString()?.let(values::add)
+                    clip.getItemAt(i).uri?.let { values.add(it.toString()) }
+                } }
+            }
             Intent.ACTION_VIEW -> intent.dataString?.let(values::add)
         }
         return values.firstNotNullOfOrNull(::normalizeLink)
@@ -153,6 +168,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var editItem by remember { mutableStateOf<LinkItem?>(null) }
     var categoryItem by remember { mutableStateOf<LinkItem?>(null) }
     var menuItem by remember { mutableStateOf<LinkItem?>(null) }
+    var detailItem by remember { mutableStateOf<LinkItem?>(null) }
+    var linkedNotes by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var addCollectionDialog by remember { mutableStateOf(false) }
     var addTagDialog by remember { mutableStateOf(false) }
     var trashMode by remember { mutableStateOf(false) }
@@ -263,9 +280,13 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=20.dp)) {
                         items(items,key={it.id}) { item ->
                             ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
-                                val url=item.url
-                                if(url!=null) runCatching { context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }
-                                else editItem=item
+                                if(item.type=="note") editItem=item
+                                else {
+                                    detailItem=item
+                                    scope.launch {
+                                        linkedNotes = runCatching { api.listItems(type="note").filter { it.parent_item_id==item.id } }.getOrDefault(emptyList())
+                                    }
+                                }
                             })
                         }
                     }
@@ -295,6 +316,30 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     categoryItem?.let { item -> CategoryPicker(categories,item.category_id,onDismiss={categoryItem=null},onSelect={id->
         launchReload { api.updateItem(item.id,buildJsonObject { id?.let{put("category_id",it)} }); categoryItem=null }
     }) }
+    detailItem?.let { item ->
+        AlertDialog(
+            onDismissRequest={detailItem=null},
+            title={Text(item.title ?: item.site_name ?: "Saved link", fontWeight=FontWeight.Bold)},
+            text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+                Text(item.url ?: "", color=Accent, style=MaterialTheme.typography.bodySmall)
+                item.description?.takeIf{it.isNotBlank()}?.let { Text(it,color=Muted) }
+                Divider(color=Muted.copy(alpha=.2f))
+                Text("Notes about this link",fontWeight=FontWeight.SemiBold)
+                if(linkedNotes.isEmpty()) Text("No notes yet. Add one from here or the link menu.",color=Muted)
+                linkedNotes.forEach { note ->
+                    Card(colors=CardDefaults.cardColors(containerColor=Ink),modifier=Modifier.fillMaxWidth().clickable { editItem=note; detailItem=null }) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(note.title?.takeIf{it.isNotBlank()} ?: "Untitled note",fontWeight=FontWeight.SemiBold)
+                            Text(note.content ?: "",color=Muted,maxLines=5)
+                            Text("Tap to read or edit",color=Accent,style=MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }},
+            confirmButton={TextButton(onClick={detailItem=null}){Text("Close")}},
+            dismissButton={TextButton(onClick={noteParentId=item.id;addDialog=true;detailItem=null}){Text("Add note")}}
+        )
+    }
     menuItem?.let { item ->
         AlertDialog(onDismissRequest={menuItem=null},title={Text(item.title ?: item.url ?: "Saved item")},
             text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
@@ -316,7 +361,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
 @Composable
 private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<VaultCollection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
     val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
-    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().clickable{onOpen()}) {
+    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().animateContentSize().clickable{onOpen()}) {
         Column(Modifier.padding(14.dp)) {
             if(!item.thumbnail_url.isNullOrBlank()) {
                 AsyncImage(model=item.thumbnail_url,contentDescription="Link preview",modifier=Modifier.fillMaxWidth().height(148.dp),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
@@ -333,7 +378,8 @@ private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<Va
                 IconButton(onClick=onMenu){Icon(Icons.Default.MoreVert,null,tint=Muted)}
             }
             val summary=item.description ?: item.content
-            if(!summary.isNullOrBlank()) Text(summary,color=Muted,maxLines=3,style=MaterialTheme.typography.bodyMedium,modifier=Modifier.padding(top=8.dp))
+            if(!summary.isNullOrBlank()) Text(summary,color=Muted,maxLines=if(item.type=="note") 5 else 3,style=MaterialTheme.typography.bodyMedium,modifier=Modifier.padding(top=8.dp))
+            if(item.type=="link") Text("Tap to preview · notes & details",color=Accent.copy(alpha=.9f),style=MaterialTheme.typography.labelSmall,modifier=Modifier.padding(top=6.dp))
             Row(Modifier.padding(top=10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
                 AssistChip(onClick={},label={Text(category)})
                 item.collection_id?.let { id-> collections.firstOrNull{it.id==id}?.let { AssistChip(onClick={},label={Text(it.name)}) } }
