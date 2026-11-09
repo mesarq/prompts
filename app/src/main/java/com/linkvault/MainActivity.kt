@@ -47,6 +47,7 @@ import kotlinx.coroutines.delay
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonPrimitive
@@ -158,7 +159,7 @@ private suspend fun fetchSharedPageTitle(url: String): String? {
     val raw = patterns.firstNotNullOfOrNull { it.find(html)?.groupValues?.getOrNull(1) }
         ?.replace(Regex("\\s+"), " ")?.trim()
     val decoded = raw?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
-    return decoded?.replace(Regex("""\\s*:\\s*r/[^|]+$""", RegexOption.IGNORE_CASE), "")?.takeIf {
+    return decoded?.replace(Regex("""\s*:\s*r/[^ ]+$""", RegexOption.IGNORE_CASE), "")?.takeIf {
         it.isNotBlank() && !it.equals("reddit - dive into anything", ignoreCase = true)
     }
 }
