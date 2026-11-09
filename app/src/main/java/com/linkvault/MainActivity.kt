@@ -85,23 +85,33 @@ class MainActivity : ComponentActivity() {
         when (intent.action) {
             Intent.ACTION_SEND -> {
                 intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(values::add)
-                intent.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT)?.toString()?.let(values::add)
+                intent.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT)?.toString()?.let { values.add(android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString()) }
                 intent.dataString?.let(values::add)
+                intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)?.let { values.add(readSharedUri(it)) }
                 intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) {
                     clip.getItemAt(i).text?.toString()?.let(values::add)
-                    clip.getItemAt(i).uri?.let { values.add(it.toString()) }
+                    clip.getItemAt(i).uri?.let { values.add(readSharedUri(it)) }
                 } }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
                 intent.getCharSequenceArrayListExtra(Intent.EXTRA_TEXT)?.forEach { values.add(it.toString()) }
+                intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)?.forEach { values.add(readSharedUri(it)) }
                 intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) {
                     clip.getItemAt(i).text?.toString()?.let(values::add)
-                    clip.getItemAt(i).uri?.let { values.add(it.toString()) }
+                    clip.getItemAt(i).uri?.let { values.add(readSharedUri(it)) }
                 } }
             }
             Intent.ACTION_VIEW -> intent.dataString?.let(values::add)
         }
         return values.firstNotNullOfOrNull(::normalizeLink)
+    }
+
+    private fun readSharedUri(uri: Uri): String {
+        val mime = contentResolver.getType(uri).orEmpty()
+        if (!mime.startsWith("text/")) return uri.toString()
+        return runCatching {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText().take(200_000) } ?: uri.toString()
+        }.getOrDefault(uri.toString())
     }
 }
 
