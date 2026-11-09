@@ -11,8 +11,8 @@ android {
         applicationId = "com.linkvault"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.1.2"
+        versionCode = 4
+        versionName = "0.2.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://fqlmomsdzdqzamykogqm.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_8ov5Cc7oyr-hBMdg3Innwg_Lk15sHK7\"")
     }

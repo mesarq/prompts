@@ -1,44 +1,48 @@
 package com.linkvault
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
-import com.linkvault.data.LinkItem
-import com.linkvault.data.LinkVaultApi
-import com.linkvault.data.Supabase
+import com.linkvault.data.*
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.providers.builtin.Email
 import kotlinx.coroutines.launch
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 private val Ink = Color(0xFF0B0D12)
 private val Panel = Color(0xFF151923)
 private val Accent = Color(0xFF9B8CFF)
 private val Muted = Color(0xFF9AA3B2)
+private const val CACHE = "linkvault-cache"
 
 class MainActivity : ComponentActivity() {
     private var sharedText by mutableStateOf<String?>(null)
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         sharedText = readSharedText(intent)
@@ -46,140 +50,58 @@ class MainActivity : ComponentActivity() {
             LinkVaultTheme {
                 var signedIn by remember { mutableStateOf(false) }
                 var authReady by remember { mutableStateOf(false) }
-                var startupError by remember { mutableStateOf<String?>(null) }
-
                 LaunchedEffect(Unit) {
-                    try {
-                        // Wait for the SDK to restore its persisted session before deciding
-                        // whether to show the sign-in screen.
-                        Supabase.client.auth.awaitInitialization()
-                        signedIn = Supabase.client.auth.currentSessionOrNull() != null
-                    } catch (e: Exception) {
-                        startupError = e.message ?: "Could not restore your session."
-                    } finally {
-                        authReady = true
-                    }
+                    runCatching { Supabase.client.auth.awaitInitialization(); signedIn = Supabase.client.auth.currentSessionOrNull() != null }
+                    authReady = true
                 }
-
                 when {
-                    !authReady -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Accent)
-                    }
-                    signedIn -> VaultScreen(
-                        initialSharedText = sharedText,
-                        onSharedConsumed = { sharedText = null },
-                        onSignOut = {
-                            lifecycleScope.launch {
-                                Supabase.client.auth.signOut()
-                                signedIn = false
-                            }
-                        }
-                    )
-                    else -> AuthScreen(
-                        startupError = startupError,
-                        onSignedIn = { signedIn = true }
-                    )
+                    !authReady -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
+                    signedIn -> VaultScreen(sharedText, { sharedText = null }, {
+                        lifecycleScope.launch { Supabase.client.auth.signOut(); signedIn = false }
+                    })
+                    else -> AuthScreen { signedIn = true }
                 }
             }
         }
     }
-
     override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        sharedText = readSharedText(intent)
+        super.onNewIntent(intent); setIntent(intent); sharedText = readSharedText(intent)
     }
-
     private fun readSharedText(intent: Intent?): String? {
         if (intent == null) return null
-        val candidates = mutableListOf<String>()
+        val values = mutableListOf<String>()
         when (intent.action) {
-            Intent.ACTION_SEND -> {
-                intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(candidates::add)
-                intent.getStringExtra(Intent.EXTRA_PROCESS_TEXT)?.let(candidates::add)
-                intent.dataString?.let(candidates::add)
-                @Suppress("DEPRECATION")
-                (intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uri ->
-                    runCatching { contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }
-                        .getOrNull()?.let(candidates::add)
-                    candidates.add(uri.toString())
-                }
-            }
-            Intent.ACTION_SEND_MULTIPLE -> {
-                @Suppress("DEPRECATION")
-                (intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: arrayListOf()).forEach { uri ->
-                    candidates.add(uri.toString())
-                }
-            }
-            Intent.ACTION_VIEW -> intent.dataString?.let(candidates::add)
+            Intent.ACTION_SEND -> intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(values::add)
+            Intent.ACTION_VIEW -> intent.dataString?.let(values::add)
         }
-        intent.clipData?.let { clip ->
-            for (i in 0 until clip.itemCount) {
-                clip.getItemAt(i).text?.toString()?.let(candidates::add)
-                clip.getItemAt(i).uri?.toString()?.let(candidates::add)
-            }
-        }
-        return candidates.firstNotNullOfOrNull(::normalizeLink)
+        return values.firstNotNullOfOrNull(::normalizeLink)
     }
 }
 
 private fun normalizeLink(raw: String): String? {
     val text = raw.trim()
-    if (text.isEmpty()) return null
-
-    val extracted = Regex("https?://[^\\s<>\\\"']+", RegexOption.IGNORE_CASE)
-        .find(text)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
-    if (extracted != null) return validateWebUrl(extracted)
-
-    val withoutLeadingSlash = text.removePrefix("/")
-    val redditPath = Regex("^(?:r/)?([A-Za-z0-9_]{2,21})/(s/[A-Za-z0-9_-]+|comments/[A-Za-z0-9_-]+)(?:[/?#].*)?$", RegexOption.IGNORE_CASE)
-        .matchEntire(withoutLeadingSlash)
-    if (redditPath != null) {
-        return "https://www.reddit.com/r/${redditPath.groupValues[1]}/${redditPath.groupValues[2]}"
-    }
-
-    val redditHostPath = Regex("^(?:www\\.)?reddit\\.com/(r/)?(.+)$", RegexOption.IGNORE_CASE).matchEntire(text)
-    if (redditHostPath != null) return validateWebUrl("https://www.reddit.com/" + text.substringAfter("reddit.com/"))
-
-    val withScheme = if (text.startsWith("http://", true) || text.startsWith("https://", true)) text
-        else if (text.matches(Regex("^[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(/.*)?$"))) "https://$text"
-        else return null
-    return validateWebUrl(withScheme)
-}
-
-private fun validateWebUrl(value: String): String? {
+    val extracted = Regex("https?://[^\\s<>\\\"']+", RegexOption.IGNORE_CASE).find(text)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
+    val value = extracted ?: if (text.matches(Regex("^[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(/.*)?$"))) "https://$text" else return null
     val uri = runCatching { Uri.parse(value) }.getOrNull() ?: return null
-    val scheme = uri.scheme?.lowercase()
-    val host = uri.host
-    return if (scheme in listOf("http", "https") && !host.isNullOrBlank() && !host.contains(" ")) value else null
+    return value.takeIf { uri.scheme in listOf("http","https") && !uri.host.isNullOrBlank() }
 }
 
 @Composable
 private fun LinkVaultTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = Accent, secondary = Color(0xFF73D6C3),
-            background = Ink, surface = Panel,
-            onBackground = Color(0xFFF3F4F8), onSurface = Color(0xFFF3F4F8)
-        )
-    ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = Ink, contentColor = Color(0xFFF3F4F8)) {
-            content()
-        }
+    MaterialTheme(colorScheme = darkColorScheme(primary = Accent, secondary = Color(0xFF73D6C3), background = Ink,
+        surface = Panel, onBackground = Color(0xFFF3F4F8), onSurface = Color(0xFFF3F4F8))) {
+        Surface(Modifier.fillMaxSize(), color = Ink, contentColor = Color(0xFFF3F4F8)) { content() }
     }
 }
 
 @Composable
-private fun AuthScreen(startupError: String?, onSignedIn: () -> Unit) {
+private fun AuthScreen(onSignedIn: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf(startupError) }
-    var busy by remember { mutableStateOf(false) }
-    var createAccount by remember { mutableStateOf(false) }
-
+    var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }
+    var create by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Ink).padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Bookmark, null, tint = Accent, modifier = Modifier.size(42.dp))
+        Icon(Icons.Default.Bookmarks, null, tint = Accent, modifier = Modifier.size(44.dp))
         Spacer(Modifier.height(18.dp))
         Text("Your links, safely kept.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("Sign in to your private LinkVault.", color = Muted)
@@ -188,131 +110,306 @@ private fun AuthScreen(startupError: String?, onSignedIn: () -> Unit) {
         Spacer(Modifier.height(12.dp))
         OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true,
             modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
-        error?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Spacer(Modifier.height(18.dp))
-        Button(onClick = {
-            scope.launch {
-                busy = true; error = null
-                try {
-                    if (createAccount) Supabase.client.auth.signUpWith(Email) {
-                        this.email = email.trim(); this.password = password
-                    } else Supabase.client.auth.signInWith(Email) {
-                        this.email = email.trim(); this.password = password
-                    }
-                    Supabase.client.auth.awaitInitialization()
-                    if (Supabase.client.auth.currentSessionOrNull() != null) onSignedIn()
-                    else error = "Check your email to confirm your account, then sign in."
-                } catch (e: Exception) { error = e.message ?: "Authentication failed." }
-                finally { busy = false }
-            }
-        }, enabled = !busy && email.isNotBlank() && password.length >= 6,
-            modifier = Modifier.fillMaxWidth().height(52.dp)) {
-            Text(if (busy) "Please wait…" else if (createAccount) "Create account" else "Sign in")
+        Button(onClick = { scope.launch {
+            busy = true; error = null
+            try {
+                if (create) Supabase.client.auth.signUpWith(Email) { this.email=email.trim(); this.password=password }
+                else Supabase.client.auth.signInWith(Email) { this.email=email.trim(); this.password=password }
+                Supabase.client.auth.awaitInitialization()
+                if (Supabase.client.auth.currentSessionOrNull()!=null) onSignedIn() else error="Check your email to confirm your account."
+            } catch(e:Exception) { error=e.message ?: "Authentication failed." } finally { busy=false }
+        } }, enabled=!busy && email.isNotBlank() && password.length>=6, modifier=Modifier.fillMaxWidth()) {
+            Text(if(busy) "Please wait…" else if(create) "Create account" else "Sign in")
         }
-        TextButton(onClick = { createAccount = !createAccount; error = null }) {
-            Text(if (createAccount) "Already have an account? Sign in" else "New to LinkVault? Create an account")
+        TextButton(onClick={ create=!create; error=null }) { Text(if(create) "Already registered? Sign in" else "Create an account") }
+    }
+}
+
+private enum class Page { Home, Categories, Notes, Favorites, More }
+
+@Composable
+private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSignOut: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val api = remember { LinkVaultApi() }
+    var page by remember { mutableStateOf(Page.Home) }
+    var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
+    var categories by remember { mutableStateOf<List<Category>>(emptyList()) }
+    var tags by remember { mutableStateOf<List<Tag>>(emptyList()) }
+    var collections by remember { mutableStateOf<List<Collection>>(emptyList()) }
+    var selectedCategory by remember { mutableStateOf<String?>(null) }
+    var selectedCollection by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var offline by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var addDialog by remember { mutableStateOf(false) }
+    var categoryDialog by remember { mutableStateOf(false) }
+    var editItem by remember { mutableStateOf<LinkItem?>(null) }
+    var categoryItem by remember { mutableStateOf<LinkItem?>(null) }
+    var menuItem by remember { mutableStateOf<LinkItem?>(null) }
+    var addCollectionDialog by remember { mutableStateOf(false) }
+    var addTagDialog by remember { mutableStateOf(false) }
+    var trashMode by remember { mutableStateOf(false) }\n    var sharedPrefill by remember { mutableStateOf("") }\n    var noteParentId by remember { mutableStateOf<String?>(null) }
+    var trashed by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
+    var snackbar = remember { SnackbarHostState() }
+
+    suspend fun reload() {
+        busy = true
+        try {
+            items = api.listItems(query, selectedCategory, page==Page.Favorites, if(page==Page.Notes) "note" else null, selectedCollection, trashMode)
+            offline = false
+            context.getSharedPreferences(CACHE, Context.MODE_PRIVATE).edit().putString("items", Json.encodeToString(items)).apply()
+            categories = api.categories(); tags = api.tags(); collections = api.collections()
+            if (trashMode) trashed = items
+            message = null
+        } catch (e:Exception) {
+            val cached = context.getSharedPreferences(CACHE, Context.MODE_PRIVATE).getString("items", null)
+            if (cached != null) {
+                items = runCatching { Json.decodeFromString<List<LinkItem>>(cached) }.getOrDefault(emptyList())
+                offline = true
+            }
+            message = e.message ?: "Couldn't refresh. Showing saved offline copy."
+        } finally { busy=false }
+    }
+    LaunchedEffect(Unit) { reload() }
+    LaunchedEffect(page, selectedCategory, selectedCollection, query, trashMode) { reload() }
+    LaunchedEffect(sharedText) {
+        if (!sharedText.isNullOrBlank()) { val url=normalizeLink(sharedText); if(url!=null) { sharedPrefill=url; addDialog=true; message="Shared link received."; }; onSharedConsumed() }
+    }
+
+    fun launchReload(block: suspend () -> Unit) { scope.launch { busy=true; try { block(); reload() } catch(e:Exception) { message=e.message ?: "Action failed." } finally { busy=false } } }
+
+    Scaffold(
+        containerColor=Ink,
+        snackbarHost={ SnackbarHost(snackbar) },
+        floatingActionButton={
+            FloatingActionButton(onClick={ addDialog=true }, containerColor=Accent, contentColor=Ink) { Icon(Icons.Default.Add, "Add") }
+        },
+        bottomBar={
+            NavigationBar(containerColor=Panel) {
+                NavigationBarItem(selected=page==Page.Home, onClick={page=Page.Home; trashMode=false}, icon={Icon(Icons.Default.Home,null)}, label={Text("Home")})
+                NavigationBarItem(selected=page==Page.Categories, onClick={page=Page.Categories; trashMode=false}, icon={Icon(Icons.Default.Folder,null)}, label={Text("Categories")})
+                NavigationBarItem(selected=page==Page.Notes, onClick={page=Page.Notes; trashMode=false}, icon={Icon(Icons.Default.Description,null)}, label={Text("Notes")})
+                NavigationBarItem(selected=page==Page.Favorites, onClick={page=Page.Favorites; trashMode=false}, icon={Icon(Icons.Default.Favorite,null)}, label={Text("Favorites")})
+                NavigationBarItem(selected=page==Page.More, onClick={page=Page.More; trashMode=false}, icon={Icon(Icons.Default.MoreHoriz,null)}, label={Text("More")})
+            }
+        }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=16.dp)) {
+            Row(Modifier.fillMaxWidth().padding(top=14.dp,bottom=10.dp), verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("LinkVault", style=MaterialTheme.typography.headlineMedium, fontWeight=FontWeight.Bold)
+                    Text(if(offline) "Offline · showing cached library" else "A quieter place for everything worth keeping.", color=Muted, style=MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick=onSignOut) { Text("Sign out") }
+            }
+            if(page==Page.Home || page==Page.Favorites || page==Page.Notes || trashMode) {
+                OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,
+                    leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search links and notes…")})
+                Spacer(Modifier.height(8.dp))
+                if(page==Page.Home) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected=selectedCategory==null,onClick={selectedCategory=null},label={Text("All")})
+                    categories.forEach { c -> FilterChip(selected=selectedCategory==c.id,onClick={selectedCategory=if(selectedCategory==c.id)null else c.id},label={Text(c.name)}) }
+                }
+            }
+            message?.let { Text(it,color=if(offline) Color(0xFFFFC46B) else Muted,modifier=Modifier.padding(vertical=5.dp),style=MaterialTheme.typography.bodySmall) }
+            when {
+                page==Page.Categories -> CategoriesPage(categories, items, onAdd={categoryDialog=true},
+                    onSelect={selectedCategory=it; page=Page.Home},
+                    onRename={cat,name->launchReload { api.updateCategory(cat.id,name) }},
+                    onDelete={cat->launchReload { api.deleteCategory(cat.id) }})
+                page==Page.More -> MorePage(tags,collections,trashed,trashMode,
+                    onCreateCollection={addCollectionDialog=true}, onCreateTag={addTagDialog=true},
+                    onCollection={id->selectedCollection=id;page=Page.Home},
+                    onTrash={trashMode=true;page=Page.More},
+                    onRestore={item->launchReload { api.restoreItem(item.id) }},
+                    onDeleteForever={item->launchReload { api.deleteForever(item.id) }},
+                    onExport={
+                        val text=Json.encodeToString(items)
+                        val send=Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_TEXT,text)
+                        context.startActivity(Intent.createChooser(send,"Export LinkVault backup"))
+                    },
+                    onDeleteTag={tag->launchReload { api.deleteTag(tag.id) }})
+                else -> {
+                    Row(Modifier.fillMaxWidth().padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Text(when { trashMode->"Recently deleted"; page==Page.Notes->"Your notes";page==Page.Favorites->"Favorites";else->"Recently saved" },fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
+                        if(busy) CircularProgressIndicator(Modifier.size(18.dp),strokeWidth=2.dp)
+                        else Text("${items.size} items",color=Muted,style=MaterialTheme.typography.labelMedium)
+                    }
+                    if(items.isEmpty() && !busy) EmptyState(if(page==Page.Notes) "No notes yet" else "Your vault is ready", if(page==Page.Notes) "Create your first note." else "Save something worth keeping.")
+                    else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=20.dp)) {
+                        items(items,key={it.id}) { item ->
+                            ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
+                                val url=item.url
+                                if(url!=null) runCatching { context.startActivity(Intent(Intent.ACTION_VIEW,Uri.parse(url))) }
+                                else editItem=item
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if(addDialog) AddItemDialog(categories,collections,initialUrl=sharedPrefill,parentId=noteParentId,onDismiss={addDialog=false; noteParentId=null},onSave={type,title,value,cat,col,tagnames,parentId->
+        launchReload {
+            val tagIds=tagnames.split(",").map{it.trim()}.filter{it.isNotEmpty()}.map { name ->
+                tags.firstOrNull{it.name.equals(name,true)}?.id ?: api.createTag(name).id
+            }
+            if(type=="note") api.saveNote(title,value,cat,tagIds,parentId)
+            else api.saveLink(normalizeLink(value) ?: error("Enter a valid http or https URL."),cat,col,tagIds)
+            addDialog=false
+        }
+    })
+    if(categoryDialog) NameDialog("New category","Category name",onDismiss={categoryDialog=false},onSave={name->launchReload { api.createCategory(name); categoryDialog=false }})
+    if(addCollectionDialog) NameDialog("New collection","Collection name",onDismiss={addCollectionDialog=false},onSave={name->launchReload { api.createCollection(name); addCollectionDialog=false }})
+    if(addTagDialog) NameDialog("New tag","Tag name",onDismiss={addTagDialog=false},onSave={name->launchReload { api.createTag(name); addTagDialog=false }})
+    editItem?.let { item -> EditItemDialog(item,categories,onDismiss={editItem=null},onSave={title,desc,content,cat->
+        launchReload { api.updateItem(item.id,buildJsonObject {
+            put("title",title);put("description",desc);put("content",content);cat?.let{put("category_id",it)}
+        });editItem=null }
+    }) }
+    categoryItem?.let { item -> CategoryPicker(categories,item.category_id,onDismiss={categoryItem=null},onSelect={id->
+        launchReload { api.updateItem(item.id,buildJsonObject { id?.let{put("category_id",it)} }); categoryItem=null }
+    }) }
+    menuItem?.let { item ->
+        AlertDialog(onDismissRequest={menuItem=null},title={Text(item.title ?: item.url ?: "Saved item")},
+            text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick={categoryItem=item;menuItem=null}) { Text("Change category") }
+                TextButton(onClick={editItem=item;menuItem=null}) { Text("Edit details / note") }\n                if(item.type=="link") TextButton(onClick={noteParentId=item.id; addDialog=true; menuItem=null}) { Text("Add a note about this link") }
+                TextButton(onClick={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) });menuItem=null }}) { Text(if(item.is_favorite)"Remove favorite" else "Add to favorites") }
+                TextButton(onClick={launchReload {
+                    api.deleteItem(item.id);menuItem=null
+                    val result=snackbar.showSnackbar("Moved to Recently deleted",actionLabel="Undo")
+                    if(result==SnackbarResult.ActionPerformed) api.restoreItem(item.id)
+                    reload()
+                }}) { Text("Move to Recently deleted",color=Color(0xFFFF8A80)) }
+                if(trashMode) TextButton(onClick={launchReload { api.restoreItem(item.id);menuItem=null }}) { Text("Restore") }
+            }},confirmButton={TextButton(onClick={menuItem=null}){Text("Close")}})
+    }
+}
+
+@Composable
+private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<Collection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
+    val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
+    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().clickable{onOpen()}) {
+        Column(Modifier.padding(14.dp)) {
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Icon(if(item.type=="note") Icons.Default.Description else Icons.Default.Language,null,tint=Accent)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.title?.takeIf{it.isNotBlank()} ?: item.site_name ?: item.url ?: "Untitled note",fontWeight=FontWeight.SemiBold,maxLines=2)
+                    Text(item.site_name ?: item.url ?: "Personal note",color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1)
+                }
+                IconButton(onClick=onFavorite){Icon(if(item.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,null,tint=if(item.is_favorite) Accent else Muted)}
+                IconButton(onClick=onMenu){Icon(Icons.Default.MoreVert,null,tint=Muted)}
+            }
+            val summary=item.description ?: item.content
+            if(!summary.isNullOrBlank()) Text(summary,color=Muted,maxLines=3,style=MaterialTheme.typography.bodyMedium,modifier=Modifier.padding(top=8.dp))
+            Row(Modifier.padding(top=10.dp),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
+                AssistChip(onClick={},label={Text(category)})
+                item.collection_id?.let { id-> collections.firstOrNull{it.id==id}?.let { AssistChip(onClick={},label={Text(it.name)}) } }
+                item.item_tags?.forEach { it.tags?.let { tag->AssistChip(onClick={},label={Text("#"+tag.name)}) } }
+            }
         }
     }
 }
 
 @Composable
-private fun VaultScreen(
-    initialSharedText: String?,
-    onSharedConsumed: () -> Unit,
-    onSignOut: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    val api = remember { LinkVaultApi() }
-    var saved by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
-    var search by remember { mutableStateOf("") }
-    var newUrl by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-
-    fun refresh(query: String = search) {
-        scope.launch {
-            busy = true
-            try { saved = api.listItems(query); message = null }
-            catch (e: Exception) { message = e.message ?: "Unable to load your vault." }
-            finally { busy = false }
-        }
-    }
-    LaunchedEffect(Unit) { refresh("") }
-    LaunchedEffect(initialSharedText) {
-        if (!initialSharedText.isNullOrBlank()) {
-            val normalized = normalizeLink(initialSharedText)
-            if (normalized != null) {
-                newUrl = normalized
-                message = "Link received. Tap + to save it."
-            } else {
-                message = "The shared text did not contain a supported link."
-            }
-            onSharedConsumed()
-        }
-    }
-
-    Column(Modifier.fillMaxSize().background(Ink).padding(horizontal = 18.dp)) {
-        Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("LinkVault", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
-                Text("A quieter place for everything worth keeping.", color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = onSignOut) { Text("Sign out") }
-        }
-        OutlinedTextField(search, { search = it; refresh(it) }, modifier = Modifier.fillMaxWidth(),
-            singleLine = true, leadingIcon = { Icon(Icons.Default.Search, null) }, placeholder = { Text("Search your vault") })
-        Spacer(Modifier.height(12.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(newUrl, { newUrl = it }, modifier = Modifier.weight(1f),
-                placeholder = { Text("Paste a link to save") }, singleLine = true)
-            Spacer(Modifier.width(8.dp))
-            FilledIconButton(onClick = {
-                val normalized = normalizeLink(newUrl)
-                if (normalized == null) {
-                    message = "Enter a full web address, or a Reddit path like r/BestGitHubRepos/s/abc123."
-                } else {
-                    scope.launch {
-                        busy = true
-                        try {
-                            api.saveLink(normalized)
-                            newUrl = ""
-                            message = "Saved successfully."
-                            refresh("")
-                        } catch (e: Exception) { message = e.message ?: "Could not save link." }
-                        finally { busy = false }
-                    }
-                }
-            }, enabled = !busy && newUrl.isNotBlank()) {
-                Icon(Icons.Default.Add, "Save link")
-            }
-        }
-        message?.let { Text(it, color = Muted, modifier = Modifier.padding(vertical = 8.dp)) }
-        Row(Modifier.fillMaxWidth().padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("YOUR LIBRARY", color = Muted, style = MaterialTheme.typography.labelMedium, modifier = Modifier.weight(1f))
-            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-            else Text("${saved.size} items", color = Muted, style = MaterialTheme.typography.labelMedium)
-        }
-        if (!busy && saved.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.Bookmark, null, tint = Muted, modifier = Modifier.size(36.dp))
-                    Spacer(Modifier.height(10.dp))
-                    Text("Your vault is ready", fontWeight = FontWeight.SemiBold)
-                    Text("Save a link above and it will appear here.", color = Muted)
-                }
-            }
-        } else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-            items(saved, key = { it.id }) { item ->
-                Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp)) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text(item.title ?: item.url ?: "Saved item", fontWeight = FontWeight.SemiBold)
-                        item.description?.takeIf { it.isNotBlank() }?.let {
-                            Spacer(Modifier.height(5.dp)); Text(it, color = Muted, maxLines = 2)
+private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:()->Unit,onSelect:(String)->Unit,onRename:(Category,String)->Unit,onDelete:(Category)->Unit) {
+    var rename by remember { mutableStateOf<Category?>(null) }
+    Column(Modifier.fillMaxSize()) {
+        Row(verticalAlignment=Alignment.CenterVertically) { Text("Organize your vault",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f)); Button(onClick=onAdd){Text("Add")}}
+        LazyColumn(verticalArrangement=Arrangement.spacedBy(8.dp),contentPadding=PaddingValues(vertical=12.dp)) {
+            items(categories,key={it.id}) { c ->
+                Card(colors=CardDefaults.cardColors(containerColor=Panel),modifier=Modifier.fillMaxWidth().clickable{onSelect(c.id)}) {
+                    Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Icon(Icons.Default.Folder,null,tint=Accent)
+                        Spacer(Modifier.width(12.dp)); Column(Modifier.weight(1f)){Text(c.name,fontWeight=FontWeight.Medium);Text(if(c.is_system)"Default category" else "Tap to filter",color=Muted,style=MaterialTheme.typography.bodySmall)}
+                        if(!c.is_system) {
+                            IconButton(onClick={rename=c}){Icon(Icons.Default.Edit,null)}
+                            IconButton(onClick={onDelete(c)}){Icon(Icons.Default.Delete,null,tint=Color(0xFFFF8A80))}
                         }
-                        item.url?.let { Spacer(Modifier.height(8.dp)); Text(it, color = Accent, style = MaterialTheme.typography.bodySmall, maxLines = 1) }
                     }
                 }
             }
         }
     }
+    rename?.let { c->NameDialog("Rename category","Category name",c.name,{rename=null},{onRename(c,it);rename=null}) }
+}
+
+@Composable
+private fun MorePage(tags:List<Tag>,collections:List<Collection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit) {
+    Column(Modifier.fillMaxSize()) {
+        Text("Collections",fontWeight=FontWeight.SemiBold)
+        Button(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth()) { Text("Create collection") }
+        collections.forEach { c-> ListItem(headlineContent={Text(c.name)},supportingContent={Text(c.description ?: "Collection")},leadingContent={Icon(Icons.Default.CollectionsBookmark,null)},modifier=Modifier.clickable{onCollection(c.id)}) }
+        Divider(color=Muted.copy(alpha=.2f))
+        Row(verticalAlignment=Alignment.CenterVertically){Text("Tags",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));TextButton(onClick=onCreateTag){Text("Add tag")}}
+        collections.take(0)
+        tags.forEach { t->Row(verticalAlignment=Alignment.CenterVertically){Text("#${t.name}",modifier=Modifier.weight(1f));IconButton(onClick={onDeleteTag(t)}){Icon(Icons.Default.Close,null)}}}
+        Divider(color=Muted.copy(alpha=.2f))
+        TextButton(onClick=onExport){Icon(Icons.Default.FileDownload,null);Spacer(Modifier.width(8.dp));Text("Export backup (JSON)")}
+        TextButton(onClick=onTrash){Icon(Icons.Default.DeleteSweep,null);Spacer(Modifier.width(8.dp));Text("Recently deleted")}
+        if(trashMode) {
+            Text("Recently deleted",fontWeight=FontWeight.SemiBold)
+            trashed.forEach { item->Row(verticalAlignment=Alignment.CenterVertically){Text(item.title ?: item.url ?: "Deleted item",modifier=Modifier.weight(1f));TextButton(onClick={onRestore(item)}){Text("Restore")};TextButton(onClick={onDeleteForever(item)}){Text("Delete forever")}}}
+        }
+    }
+}
+
+@Composable
+private fun EmptyState(title:String,subtitle:String) {
+    Box(Modifier.fillMaxWidth().padding(40.dp),contentAlignment=Alignment.Center) { Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Default.Bookmarks,null,tint=Muted,modifier=Modifier.size(42.dp));Spacer(Modifier.height(12.dp));Text(title,fontWeight=FontWeight.SemiBold);Text(subtitle,color=Muted)} }
+}
+
+@Composable
+private fun NameDialog(title:String,label:String,initial:String="",onDismiss:()->Unit,onSave:(String)->Unit) {
+    var value by remember { mutableStateOf(initial) }
+    AlertDialog(onDismissRequest=onDismiss,title={Text(title)},text={OutlinedTextField(value,{value=it},label={Text(label)},singleLine=true)},
+        confirmButton={TextButton(onClick={onSave(value.trim())},enabled=value.isNotBlank()){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+}
+
+@Composable
+private fun AddItemDialog(categories:List<Category>,collections:List<Collection>,initialUrl:String,parentId:String?,onDismiss:()->Unit,onSave:(String,String,String,String?,String?,String,String?)->Unit) {
+    var type by remember { mutableStateOf("link") }; var title by remember { mutableStateOf("") }
+    var value by remember { mutableStateOf(initialUrl) }; var category by remember { mutableStateOf<String?>(null) }
+    var collection by remember { mutableStateOf<String?>(null) }; var tags by remember { mutableStateOf("") }
+    AlertDialog(onDismissRequest=onDismiss,title={Text(if(type=="note")"New note" else "Save a link")},
+        text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+            Row { FilterChip(selected=type=="link",onClick={type="link"},label={Text("Link")});Spacer(Modifier.width(8.dp));FilterChip(selected=type=="note",onClick={type="note"},label={Text("Note")}) }
+            OutlinedTextField(title,{title=it},label={Text("Title")},singleLine=true,modifier=Modifier.fillMaxWidth())
+            OutlinedTextField(value,{value=it},label={Text(if(type=="note")"Write your note" else "URL")},modifier=Modifier.fillMaxWidth(),minLines=if(type=="note")4 else 1)
+            var expanded by remember { mutableStateOf(false) }
+            Box { OutlinedButton(onClick={expanded=true}){Text(categories.firstOrNull{it.id==category}?.name ?: "Uncategorized")};DropdownMenu(expanded,{expanded=false}){categories.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={category=c.id;expanded=false})}}}
+            if(type=="link" && collections.isNotEmpty()) {
+                var exp by remember{mutableStateOf(false)}
+                Box{OutlinedButton(onClick={exp=true}){Text(collections.firstOrNull{it.id==collection}?.name ?: "No collection")};DropdownMenu(exp, {exp=false}){collections.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={collection=c.id;exp=false})}}}
+            }
+            OutlinedTextField(tags,{tags=it},label={Text("Tags (comma separated)")},singleLine=true)
+        }},
+        confirmButton={TextButton(onClick={onSave(type,title,value,category,collection,tags,parentId)},enabled=value.isNotBlank()){Text("Save")}},
+        dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+}
+
+@Composable
+private fun EditItemDialog(item:LinkItem,categories:List<Category>,onDismiss:()->Unit,onSave:(String,String,String,String?)->Unit) {
+    var title by remember{mutableStateOf(item.title ?: "")};var desc by remember{mutableStateOf(item.description ?: "")}
+    var content by remember{mutableStateOf(item.content ?: "")};var cat by remember{mutableStateOf(item.category_id)}
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Edit item")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
+        OutlinedTextField(title,{title=it},label={Text("Title")})
+        OutlinedTextField(desc,{desc=it},label={Text("Description")})
+        if(item.type=="note") OutlinedTextField(content,{content=it},label={Text("Note")},minLines=4)
+        var exp by remember{mutableStateOf(false)}
+        Box{OutlinedButton(onClick={exp=true}){Text(categories.firstOrNull{it.id==cat}?.name ?: "Category")};DropdownMenu(exp,{exp=false}){categories.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={cat=c.id;exp=false})}}}
+    }},confirmButton={TextButton(onClick={onSave(title,desc,content,cat)} ){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
+}
+
+@Composable
+private fun CategoryPicker(categories:List<Category>,current:String?,onDismiss:()->Unit,onSelect:(String?)->Unit) {
+    AlertDialog(onDismissRequest=onDismiss,title={Text("Change category")},text={Column{categories.forEach{c->TextButton(onClick={onSelect(c.id)}){Text(c.name)}}}},
+        confirmButton={TextButton(onClick={onSelect(null)}){Text("Uncategorized")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})
 }
