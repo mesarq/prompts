@@ -1,5 +1,6 @@
 package com.linkvault
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -35,16 +36,38 @@ private val Accent = Color(0xFF9B8CFF)
 private val Muted = Color(0xFF9AA3B2)
 
 class MainActivity : ComponentActivity() {
+    private var sharedUrl by mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sharedUrl = sharedUrlFrom(intent)
         setContent {
             LinkVaultTheme {
                 var signedIn by remember { mutableStateOf(Supabase.client.auth.currentSessionOrNull() != null) }
                 if (signedIn) VaultScreen(
+                    initialSharedUrl = sharedUrl,
+                    onSharedConsumed = { sharedUrl = null },
                     onSignOut = { lifecycleScope.launch { Supabase.client.auth.signOut(); signedIn = false } }
                 ) else AuthScreen(onSignedIn = { signedIn = true })
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        sharedUrl = sharedUrlFrom(intent)
+    }
+
+    private fun sharedUrlFrom(intent: Intent?): String? {
+        if (intent == null) return null
+        val raw = when (intent.action) {
+            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+            Intent.ACTION_VIEW -> intent.dataString
+            else -> null
+        } ?: return null
+        return Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE)
+            .find(raw)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
     }
 }
 
@@ -55,9 +78,12 @@ private fun LinkVaultTheme(content: @Composable () -> Unit) {
             primary = Accent, secondary = Color(0xFF73D6C3),
             background = Ink, surface = Panel,
             onBackground = Color(0xFFF3F4F8), onSurface = Color(0xFFF3F4F8)
-        ),
-        content = content
-    )
+        )
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = Ink, contentColor = Color(0xFFF3F4F8)) {
+            content()
+        }
+    }
 }
 
 @Composable
@@ -106,7 +132,11 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
 }
 
 @Composable
-private fun VaultScreen(onSignOut: () -> Unit) {
+private fun VaultScreen(
+    initialSharedUrl: String?,
+    onSharedConsumed: () -> Unit,
+    onSignOut: () -> Unit
+) {
     val scope = rememberCoroutineScope()
     val api = remember { LinkVaultApi() }
     var saved by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
@@ -124,11 +154,18 @@ private fun VaultScreen(onSignOut: () -> Unit) {
         }
     }
     LaunchedEffect(Unit) { refresh("") }
+    LaunchedEffect(initialSharedUrl) {
+        if (!initialSharedUrl.isNullOrBlank()) {
+            newUrl = initialSharedUrl
+            message = "Link received from another app. Tap + to save it."
+            onSharedConsumed()
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(Ink).padding(horizontal = 18.dp)) {
         Row(Modifier.fillMaxWidth().padding(top = 18.dp, bottom = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("LinkVault", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                Text("LinkVault", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
                 Text("A quieter place for everything worth keeping.", color = Muted, style = MaterialTheme.typography.bodySmall)
             }
             TextButton(onClick = onSignOut) { Text("Sign out") }
@@ -142,10 +179,16 @@ private fun VaultScreen(onSignOut: () -> Unit) {
             Spacer(Modifier.width(8.dp))
             FilledIconButton(onClick = {
                 scope.launch {
-                    try { api.saveLink(newUrl.trim()); newUrl = ""; message = "Saved. Fetching page details…"; refresh("") }
-                    catch (e: Exception) { message = e.message ?: "Could not save link." }
+                    busy = true
+                    try {
+                        api.saveLink(newUrl.trim())
+                        newUrl = ""
+                        message = "Saved successfully."
+                        refresh("")
+                    } catch (e: Exception) { message = e.message ?: "Could not save link." }
+                    finally { busy = false }
                 }
-            }, enabled = newUrl.startsWith("http://") || newUrl.startsWith("https://")) {
+            }, enabled = !busy && (newUrl.startsWith("http://") || newUrl.startsWith("https://"))) {
                 Icon(Icons.Default.Add, "Save link")
             }
         }
