@@ -199,6 +199,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     val api = remember { LinkVaultApi() }
     val offlineStore = remember { OfflineStore(context) }
     val localDao = remember { LocalDatabase.get(context).vaultDao() }
+    val pendingSyncCount by localDao.observePendingCount(cacheUserId).collectAsState(initial = 0)
     val cacheUserId = Supabase.client.auth.currentSessionOrNull()?.user?.id ?: "signed-out"
     var page by remember { mutableStateOf(Page.Home) }
     var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
@@ -374,7 +375,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     onSelect={selectedCategory=it; page=Page.Home},
                     onRename={cat,name->launchReload { api.updateCategory(cat.id,name) }},
                     onDelete={cat->launchReload { api.deleteCategory(cat.id) }})
-                page==Page.More -> MorePage(tags,collections,trashed,trashMode,
+                page==Page.More -> MorePage(tags,collections,trashed,trashMode,pendingSyncCount,onSyncNow={SyncScheduler.enqueue(context)},
                     onCreateCollection={addCollectionDialog=true}, onCreateTag={addTagDialog=true},
                     onRenameCollection={collectionToRename=it}, onDeleteCollection={col->launchReload { api.deleteCollection(col.id) }},
                     onCollection={id->selectedCollection=id;page=Page.Home},
@@ -562,9 +563,15 @@ private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:
 }
 
 @Composable
-private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onRenameCollection:(VaultCollection)->Unit,onDeleteCollection:(VaultCollection)->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
+private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,pendingSyncCount:Int,onSyncNow:()->Unit,onCreateCollection:()->Unit,onCreateTag:()->Unit,onRenameCollection:(VaultCollection)->Unit,onDeleteCollection:(VaultCollection)->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
     Column(Modifier.fillMaxSize()) {
         Text("Your spaces",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+        Card(colors=CardDefaults.cardColors(containerColor=Panel),modifier=Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(14.dp),verticalAlignment=Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) { Text(if(pendingSyncCount==0) "All changes synced" else "$pendingSyncCount changes waiting to sync",fontWeight=FontWeight.SemiBold); Text("Your offline changes stay on this device until uploaded.",color=Muted,style=MaterialTheme.typography.bodySmall) }
+                TextButton(onClick=onSyncNow) { Text("Sync now") }
+            }
+        }
         FilledTonalButton(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Icon(Icons.Default.CreateNewFolder,null); Spacer(Modifier.width(8.dp)); Text("Create collection") }
         collections.forEach { c -> Card(colors=CardDefaults.cardColors(containerColor=Panel),modifier=Modifier.fillMaxWidth().padding(vertical=3.dp)) { Row(Modifier.clickable{onCollection(c.id)}.padding(start=14.dp,end=4.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Default.CollectionsBookmark,null,tint=Accent); Column(Modifier.weight(1f).padding(start=12.dp)) { Text(c.name,fontWeight=FontWeight.Medium); Text(c.description ?: "Collection",color=Muted,style=MaterialTheme.typography.bodySmall) }; IconButton(onClick={onRenameCollection(c)}) { Icon(Icons.Default.Edit,"Rename collection") }; IconButton(onClick={onDeleteCollection(c)}) { Icon(Icons.Default.Delete,"Delete collection",tint=Color(0xFFFF8A80)) } } } }
         Divider(color=Muted.copy(alpha=.2f))
