@@ -15,6 +15,7 @@ import io.ktor.http.contentType
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import io.github.jan.supabase.auth.auth
 import java.util.UUID
 
 @Serializable
