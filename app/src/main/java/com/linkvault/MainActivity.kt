@@ -153,7 +153,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var addCollectionDialog by remember { mutableStateOf(false) }
     var addTagDialog by remember { mutableStateOf(false) }
     var trashMode by remember { mutableStateOf(false) }
-    var sharedPrefill by remember { mutableStateOf("") }\n    var noteParentId by remember { mutableStateOf<String?>(null) }
+    var sharedPrefill by remember { mutableStateOf("") }
+    var noteParentId by remember { mutableStateOf<String?>(null) }
     var trashed by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var snackbar = remember { SnackbarHostState() }
 

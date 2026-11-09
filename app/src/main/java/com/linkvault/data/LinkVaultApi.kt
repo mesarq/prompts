@@ -27,18 +27,18 @@ class LinkVaultApi {
     private fun errorMessage(p:JsonObject,f:String)=p["error"]?.jsonObject?.get("message")?.jsonPrimitive?.contentOrNull ?: f
     private suspend fun request(method:HttpMethod,path:String,params:Map<String,String> = emptyMap(),body:JsonObject?=null):JsonObject {
         val response=Supabase.http.request {
-            url("$apiBase$path")
+            url { takeFrom("$apiBase$path") }
             this.method=method; header(HttpHeaders.Authorization,"Bearer ${token()}")
             params.forEach{(k,v)->parameter(k,v)}
             if(body!=null){contentType(ContentType.Application.Json);setBody(body.toString())}
         }
         val payload:JsonObject=response.body()
-        if(!response.status.isSuccess()) error(errorMessage(payload,"Request failed (${response.status.value()})."))
+        if(!response.status.isSuccess()) throw IllegalStateException(errorMessage(payload,"Request failed (${response.status.value})."))
         return payload
     }
     private fun obj(block:JsonObjectBuilder.()->Unit)=buildJsonObject(block)
     private inline fun <reified T> array(p:JsonObject):List<T> = p["data"]?.let{apiJson.decodeFromJsonElement<List<T>>(it)} ?: emptyList()
-    private inline fun <reified T> one(p:JsonObject):T=apiJson.decodeFromJsonElement(p["data"] ?: error("Missing response data"))
+    private inline fun <reified T> one(p:JsonObject):T=apiJson.decodeFromJsonElement(p["data"] ?: throw IllegalStateException("Missing response data"))
     suspend fun listItems(q:String="",category:String?=null,favorite:Boolean=false,type:String?=null,collection:String?=null,trashed:Boolean=false):List<LinkItem>{
         if(trashed)return array(request(HttpMethod.Get,"/items/trash"))
         val p=mutableMapOf<String,String>();if(q.isNotBlank())p["q"]=q;category?.let{p["category_id"]=it}
