@@ -47,6 +47,8 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.JsonNull
+import java.util.UUID
 
 private val Ink = Color(0xFF0A0B10)
 private val Panel = Color(0xFF151722)
@@ -222,6 +224,57 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var noteParentId by remember { mutableStateOf<String?>(null) }
     var trashed by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var snackbar = remember { SnackbarHostState() }
+
+    suspend fun queueOfflineItem(type: String, title: String, value: String, categoryId: String?, collectionId: String?, parentId: String?) : LinkItem {
+        val id = UUID.randomUUID().toString()
+        val item = if (type == "note") LinkItem(id=id, type="note", title=title, content=value, category_id=categoryId, parent_item_id=parentId)
+            else LinkItem(id=id, type="link", title=title.ifBlank { value }, url=value, category_id=categoryId, collection_id=collectionId)
+        val payload = buildJsonObject {
+            put("type", type); put("title", title); put("category_id", categoryId ?: "")
+            if (type == "note") { put("content", value); parentId?.let { put("parent_item_id", it) } }
+            else { put("url", value); collectionId?.let { put("collection_id", it) } }
+        }
+        localDao.putRecord(VaultRecordEntity(cacheUserId, "item", id, Json.encodeToString(item)))
+        localDao.enqueue(SyncOutboxEntity(UUID.randomUUID().toString(), cacheUserId, "item", "create", null, null, payload.toString()))
+        offline = true
+        message = "Saved on this device. It will sync when you're back online."
+        SyncScheduler.enqueue(context)
+        return item
+    }
+
+    suspend fun updateItemResilient(item: LinkItem, values: kotlinx.serialization.json.JsonObject) {
+        try {
+            api.updateItem(item.id, values)
+        } catch (e: Exception) {
+            val updated = item.copy(
+                title = values["title"]?.jsonPrimitive?.contentOrNull ?: item.title,
+                description = values["description"]?.jsonPrimitive?.contentOrNull ?: item.description,
+                content = values["content"]?.jsonPrimitive?.contentOrNull ?: item.content,
+                category_id = if (values.containsKey("category_id")) values["category_id"]?.jsonPrimitive?.contentOrNull else item.category_id,
+                collection_id = values["collection_id"]?.jsonPrimitive?.contentOrNull ?: item.collection_id,
+                is_favorite = values["is_favorite"]?.jsonPrimitive?.booleanOrNull ?: item.is_favorite
+            )
+            localDao.putRecord(VaultRecordEntity(cacheUserId, "item", item.id, Json.encodeToString(updated)))
+            localDao.enqueue(SyncOutboxEntity(UUID.randomUUID().toString(), cacheUserId, "item", "update", item.id, null, values.toString()))
+            offline = true
+            message = "Change saved offline and queued to sync."
+            SyncScheduler.enqueue(context)
+        }
+    }
+
+    suspend fun deleteItemResilient(item: LinkItem, restore: Boolean = false) {
+        try { if (restore) api.restoreItem(item.id) else api.deleteItem(item.id) }
+        catch (e: Exception) {
+            val timestamp = if (restore) JsonNull else kotlinx.serialization.json.JsonPrimitive(java.time.Instant.now().toString())
+            val values = buildJsonObject { put("deleted_at", timestamp) }
+            val updated = item.copy(deleted_at = if (restore) null else java.time.Instant.now().toString())
+            localDao.putRecord(VaultRecordEntity(cacheUserId, "item", item.id, Json.encodeToString(updated), !restore))
+            localDao.enqueue(SyncOutboxEntity(UUID.randomUUID().toString(), cacheUserId, "item", if (restore) "restore" else "delete", item.id, null, values.toString()))
+            offline = true
+            message = "Change saved offline and queued to sync."
+            SyncScheduler.enqueue(context)
+        }
+    }
 
     suspend fun reload() {
         busy = true
