@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
                     signedIn -> VaultScreen(sharedText, { sharedText = null }, {
                         lifecycleScope.launch {
                             Supabase.client.auth.signOut()
-                            OfflineStore(this@MainActivity).close()
+                            Supabase.client.auth.currentSessionOrNull()?.user?.id?.let { OfflineStore(this@MainActivity).apply { clearUser(it); close() } }
                             signedIn = false
                         }
                     })
