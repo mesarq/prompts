@@ -1,6 +1,7 @@
 package com.linkvault
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -36,19 +37,49 @@ private val Accent = Color(0xFF9B8CFF)
 private val Muted = Color(0xFF9AA3B2)
 
 class MainActivity : ComponentActivity() {
-    private var sharedUrl by mutableStateOf<String?>(null)
+    private var sharedText by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        sharedUrl = sharedUrlFrom(intent)
+        sharedText = readSharedText(intent)
         setContent {
             LinkVaultTheme {
-                var signedIn by remember { mutableStateOf(Supabase.client.auth.currentSessionOrNull() != null) }
-                if (signedIn) VaultScreen(
-                    initialSharedUrl = sharedUrl,
-                    onSharedConsumed = { sharedUrl = null },
-                    onSignOut = { lifecycleScope.launch { Supabase.client.auth.signOut(); signedIn = false } }
-                ) else AuthScreen(onSignedIn = { signedIn = true })
+                var signedIn by remember { mutableStateOf(false) }
+                var authReady by remember { mutableStateOf(false) }
+                var startupError by remember { mutableStateOf<String?>(null) }
+
+                LaunchedEffect(Unit) {
+                    try {
+                        // Wait for the SDK to restore its persisted session before deciding
+                        // whether to show the sign-in screen.
+                        Supabase.client.auth.awaitInitialization()
+                        signedIn = Supabase.client.auth.currentSessionOrNull() != null
+                    } catch (e: Exception) {
+                        startupError = e.message ?: "Could not restore your session."
+                    } finally {
+                        authReady = true
+                    }
+                }
+
+                when {
+                    !authReady -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = Accent)
+                    }
+                    signedIn -> VaultScreen(
+                        initialSharedText = sharedText,
+                        onSharedConsumed = { sharedText = null },
+                        onSignOut = {
+                            lifecycleScope.launch {
+                                Supabase.client.auth.signOut()
+                                signedIn = false
+                            }
+                        }
+                    )
+                    else -> AuthScreen(
+                        startupError = startupError,
+                        onSignedIn = { signedIn = true }
+                    )
+                }
             }
         }
     }
@@ -56,19 +87,71 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        sharedUrl = sharedUrlFrom(intent)
+        sharedText = readSharedText(intent)
     }
 
-    private fun sharedUrlFrom(intent: Intent?): String? {
+    private fun readSharedText(intent: Intent?): String? {
         if (intent == null) return null
-        val raw = when (intent.action) {
-            Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
-            Intent.ACTION_VIEW -> intent.dataString
-            else -> null
-        } ?: return null
-        return Regex("https?://[^\\s<>]+", RegexOption.IGNORE_CASE)
-            .find(raw)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
+        val candidates = mutableListOf<String>()
+        when (intent.action) {
+            Intent.ACTION_SEND -> {
+                intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let(candidates::add)
+                intent.getStringExtra(Intent.EXTRA_PROCESS_TEXT)?.let(candidates::add)
+                intent.dataString?.let(candidates::add)
+                @Suppress("DEPRECATION")
+                (intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))?.let { uri ->
+                    runCatching { contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } }
+                        .getOrNull()?.let(candidates::add)
+                    candidates.add(uri.toString())
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                @Suppress("DEPRECATION")
+                (intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM) ?: arrayListOf()).forEach { uri ->
+                    candidates.add(uri.toString())
+                }
+            }
+            Intent.ACTION_VIEW -> intent.dataString?.let(candidates::add)
+        }
+        intent.clipData?.let { clip ->
+            for (i in 0 until clip.itemCount) {
+                clip.getItemAt(i).text?.toString()?.let(candidates::add)
+                clip.getItemAt(i).uri?.toString()?.let(candidates::add)
+            }
+        }
+        return candidates.firstNotNullOfOrNull(::normalizeLink)
     }
+}
+
+private fun normalizeLink(raw: String): String? {
+    val text = raw.trim()
+    if (text.isEmpty()) return null
+
+    val extracted = Regex("https?://[^\\s<>\\\"']+", RegexOption.IGNORE_CASE)
+        .find(text)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
+    if (extracted != null) return validateWebUrl(extracted)
+
+    val withoutLeadingSlash = text.removePrefix("/")
+    val redditPath = Regex("^(?:r/)?([A-Za-z0-9_]{2,21})/(s/[A-Za-z0-9_-]+|comments/[A-Za-z0-9_-]+)(?:[/?#].*)?$", RegexOption.IGNORE_CASE)
+        .matchEntire(withoutLeadingSlash)
+    if (redditPath != null) {
+        return "https://www.reddit.com/r/${redditPath.groupValues[1]}/${redditPath.groupValues[2]}"
+    }
+
+    val redditHostPath = Regex("^(?:www\\.)?reddit\\.com/(r/)?(.+)$", RegexOption.IGNORE_CASE).matchEntire(text)
+    if (redditHostPath != null) return validateWebUrl("https://www.reddit.com/" + text.substringAfter("reddit.com/"))
+
+    val withScheme = if (text.startsWith("http://", true) || text.startsWith("https://", true)) text
+        else if (text.matches(Regex("^[A-Za-z0-9.-]+\\.[A-Za-z]{2,}(/.*)?$"))) "https://$text"
+        else return null
+    return validateWebUrl(withScheme)
+}
+
+private fun validateWebUrl(value: String): String? {
+    val uri = runCatching { Uri.parse(value) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase()
+    val host = uri.host
+    return if (scheme in listOf("http", "https") && !host.isNullOrBlank() && !host.contains(" ")) value else null
 }
 
 @Composable
@@ -87,11 +170,11 @@ private fun LinkVaultTheme(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun AuthScreen(onSignedIn: () -> Unit) {
+private fun AuthScreen(startupError: String?, onSignedIn: () -> Unit) {
     val scope = rememberCoroutineScope()
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
+    var error by remember { mutableStateOf(startupError) }
     var busy by remember { mutableStateOf(false) }
     var createAccount by remember { mutableStateOf(false) }
 
@@ -116,6 +199,7 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
                     } else Supabase.client.auth.signInWith(Email) {
                         this.email = email.trim(); this.password = password
                     }
+                    Supabase.client.auth.awaitInitialization()
                     if (Supabase.client.auth.currentSessionOrNull() != null) onSignedIn()
                     else error = "Check your email to confirm your account, then sign in."
                 } catch (e: Exception) { error = e.message ?: "Authentication failed." }
@@ -133,7 +217,7 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
 
 @Composable
 private fun VaultScreen(
-    initialSharedUrl: String?,
+    initialSharedText: String?,
     onSharedConsumed: () -> Unit,
     onSignOut: () -> Unit
 ) {
@@ -154,10 +238,15 @@ private fun VaultScreen(
         }
     }
     LaunchedEffect(Unit) { refresh("") }
-    LaunchedEffect(initialSharedUrl) {
-        if (!initialSharedUrl.isNullOrBlank()) {
-            newUrl = initialSharedUrl
-            message = "Link received from another app. Tap + to save it."
+    LaunchedEffect(initialSharedText) {
+        if (!initialSharedText.isNullOrBlank()) {
+            val normalized = normalizeLink(initialSharedText)
+            if (normalized != null) {
+                newUrl = normalized
+                message = "Link received. Tap + to save it."
+            } else {
+                message = "The shared text did not contain a supported link."
+            }
             onSharedConsumed()
         }
     }
@@ -178,17 +267,22 @@ private fun VaultScreen(
                 placeholder = { Text("Paste a link to save") }, singleLine = true)
             Spacer(Modifier.width(8.dp))
             FilledIconButton(onClick = {
-                scope.launch {
-                    busy = true
-                    try {
-                        api.saveLink(newUrl.trim())
-                        newUrl = ""
-                        message = "Saved successfully."
-                        refresh("")
-                    } catch (e: Exception) { message = e.message ?: "Could not save link." }
-                    finally { busy = false }
+                val normalized = normalizeLink(newUrl)
+                if (normalized == null) {
+                    message = "Enter a full web address, or a Reddit path like r/BestGitHubRepos/s/abc123."
+                } else {
+                    scope.launch {
+                        busy = true
+                        try {
+                            api.saveLink(normalized)
+                            newUrl = ""
+                            message = "Saved successfully."
+                            refresh("")
+                        } catch (e: Exception) { message = e.message ?: "Could not save link." }
+                        finally { busy = false }
+                    }
                 }
-            }, enabled = !busy && (newUrl.startsWith("http://") || newUrl.startsWith("https://"))) {
+            }, enabled = !busy && newUrl.isNotBlank()) {
                 Icon(Icons.Default.Add, "Save link")
             }
         }
