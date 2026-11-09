@@ -6,7 +6,11 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.animateContentSize
+import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -24,6 +28,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -39,10 +44,12 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
-private val Ink = Color(0xFF0B0D12)
-private val Panel = Color(0xFF151923)
-private val Accent = Color(0xFF9B8CFF)
-private val Muted = Color(0xFF9AA3B2)
+private val Ink = Color(0xFF0A0B10)
+private val Panel = Color(0xFF151722)
+private val PanelRaised = Color(0xFF1D2030)
+private val Accent = Color(0xFFB9A7FF)
+private val Mint = Color(0xFF8CE5D0)
+private val Muted = Color(0xFFA5A8B8)
 private const val CACHE = "linkvault-cache"
 
 class MainActivity : ComponentActivity() {
@@ -107,9 +114,23 @@ private fun normalizeLink(raw: String): String? {
 
 @Composable
 private fun LinkVaultTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = darkColorScheme(primary = Accent, secondary = Color(0xFF73D6C3), background = Ink,
-        surface = Panel, onBackground = Color(0xFFF3F4F8), onSurface = Color(0xFFF3F4F8))) {
-        Surface(Modifier.fillMaxSize(), color = Ink, contentColor = Color(0xFFF3F4F8)) { content() }
+    val scheme = darkColorScheme(
+        primary = Accent, onPrimary = Color(0xFF21163F),
+        secondary = Mint, onSecondary = Color(0xFF082D27),
+        tertiary = Color(0xFFFFC58A), background = Ink,
+        surface = Panel, surfaceVariant = PanelRaised,
+        onBackground = Color(0xFFF5F2FF), onSurface = Color(0xFFF5F2FF),
+        onSurfaceVariant = Muted, outline = Color(0xFF424456)
+    )
+    val shapes = Shapes(
+        extraSmall = RoundedCornerShape(10.dp),
+        small = RoundedCornerShape(14.dp),
+        medium = RoundedCornerShape(20.dp),
+        large = RoundedCornerShape(28.dp),
+        extraLarge = RoundedCornerShape(36.dp)
+    )
+    MaterialTheme(colorScheme = scheme, shapes = shapes, typography = Typography()) {
+        Surface(Modifier.fillMaxSize(), color = Ink, contentColor = Color(0xFFF5F2FF)) { content() }
     }
 }
 
@@ -119,8 +140,8 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
     var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }
     var create by remember { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize().background(Ink).padding(24.dp), verticalArrangement = Arrangement.Center) {
-        Icon(Icons.Default.Bookmarks, null, tint = Accent, modifier = Modifier.size(44.dp))
+    Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PanelRaised, Ink, Ink))).padding(24.dp), verticalArrangement = Arrangement.Center) {
+        Surface(shape=RoundedCornerShape(20.dp),color=Accent.copy(alpha=.14f)) { Icon(Icons.Default.Bookmarks, null, tint = Accent, modifier = Modifier.padding(14.dp).size(34.dp)) }
         Spacer(Modifier.height(18.dp))
         Text("Your links, safely kept.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("Sign in to your private LinkVault.", color = Muted)
@@ -227,7 +248,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             FloatingActionButton(onClick={ addDialog=true }, containerColor=Accent, contentColor=Ink) { Icon(Icons.Default.Add, "Add") }
         },
         bottomBar={
-            NavigationBar(containerColor=Panel) {
+            NavigationBar(containerColor=Panel, tonalElevation=8.dp) {
                 NavigationBarItem(selected=page==Page.Home, onClick={page=Page.Home; trashMode=false}, icon={Icon(Icons.Default.Home,null)}, label={Text("Home")})
                 NavigationBarItem(selected=page==Page.Categories, onClick={page=Page.Categories; trashMode=false}, icon={Icon(Icons.Default.Folder,null)}, label={Text("Categories")})
                 NavigationBarItem(selected=page==Page.Notes, onClick={page=Page.Notes; trashMode=false}, icon={Icon(Icons.Default.Description,null)}, label={Text("Notes")})
@@ -236,17 +257,24 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             }
         }
     ) { padding ->
-        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=16.dp)) {
-            Row(Modifier.fillMaxWidth().padding(top=14.dp,bottom=10.dp), verticalAlignment=Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("LinkVault", style=MaterialTheme.typography.headlineMedium, fontWeight=FontWeight.Bold)
-                    Text(if(offline) "Offline · showing cached library" else "A quieter place for everything worth keeping.", color=Muted, style=MaterialTheme.typography.bodySmall)
+        Column(Modifier.fillMaxSize().padding(padding).padding(horizontal=18.dp)) {
+            Surface(
+                modifier=Modifier.fillMaxWidth().padding(top=12.dp,bottom=14.dp),
+                shape=RoundedCornerShape(28.dp),
+                color=PanelRaised
+            ) {
+                Row(Modifier.background(Brush.horizontalGradient(listOf(Color(0xFF27213F), PanelRaised, PanelRaised))).padding(horizontal=18.dp, vertical=18.dp),
+                    verticalAlignment=Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("LinkVault", style=MaterialTheme.typography.headlineLarge, fontWeight=FontWeight.ExtraBold)
+                        Text(if(offline) "Offline · showing cached library" else "Your personal corner of the internet.", color=Muted, style=MaterialTheme.typography.bodyMedium)
+                    }
+                    IconButton(onClick=onSignOut) { Icon(Icons.Default.AccountCircle, "Account", tint=Accent) }
                 }
-                TextButton(onClick=onSignOut) { Text("Sign out") }
             }
             if(page==Page.Home || page==Page.Favorites || page==Page.Notes || trashMode) {
-                OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true,
-                    leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search links and notes…")})
+                OutlinedTextField(query,{query=it},modifier=Modifier.fillMaxWidth(),singleLine=true, shape=RoundedCornerShape(22.dp),
+                    leadingIcon={Icon(Icons.Default.Search,null)},placeholder={Text("Search your vault…")})
                 Spacer(Modifier.height(8.dp))
                 if(page==Page.Home) Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected=selectedCategory==null,onClick={selectedCategory=null},label={Text("All")})
@@ -280,6 +308,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     if(items.isEmpty() && !busy) EmptyState(if(page==Page.Notes) "No notes yet" else "Your vault is ready", if(page==Page.Notes) "Create your first note." else "Save something worth keeping.")
                     else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=20.dp)) {
                         items(items,key={it.id}) { item ->
+                            AnimatedVisibility(visible=true, enter=fadeIn() + slideInVertically(initialOffsetY={it/5})) {
                             ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
                                 if(item.type=="note") editItem=item
                                 else {
@@ -362,7 +391,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
 @Composable
 private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<VaultCollection>,onMenu:()->Unit,onFavorite:()->Unit,onOpen:()->Unit) {
     val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
-    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(20.dp),modifier=Modifier.fillMaxWidth().animateContentSize().clickable{onOpen()}) {
+    Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(26.dp),modifier=Modifier.fillMaxWidth().border(1.dp,Color.White.copy(alpha=.055f),RoundedCornerShape(26.dp)).animateContentSize().clickable{onOpen()}) {
         Column(Modifier.padding(14.dp)) {
             if(!item.thumbnail_url.isNullOrBlank()) {
                 AsyncImage(model=item.thumbnail_url,contentDescription="Link preview",modifier=Modifier.fillMaxWidth().height(148.dp),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
@@ -375,7 +404,7 @@ private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<Va
                     Text(item.title?.takeIf{it.isNotBlank()} ?: item.site_name ?: item.url ?: "Untitled note",fontWeight=FontWeight.SemiBold,maxLines=2)
                     Text(item.site_name ?: item.url ?: "Personal note",color=Muted,style=MaterialTheme.typography.bodySmall,maxLines=1)
                 }
-                IconButton(onClick=onFavorite){Icon(if(item.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,null,tint=if(item.is_favorite) Accent else Muted)}
+                IconButton(onClick=onFavorite){Icon(if(item.is_favorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,null,tint=if(item.is_favorite) Color(0xFFFF91B5) else Muted)}
                 IconButton(onClick=onMenu){Icon(Icons.Default.MoreVert,null,tint=Muted)}
             }
             val summary=item.description ?: item.content
@@ -416,16 +445,14 @@ private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:
 @Composable
 private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
     Column(Modifier.fillMaxSize()) {
-        Text("Collections",fontWeight=FontWeight.SemiBold)
-        Button(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth()) { Text("Create collection") }
+        Text("Your spaces",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
+        FilledTonalButton(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Icon(Icons.Default.CreateNewFolder,null); Spacer(Modifier.width(8.dp)); Text("Create collection") }
         collections.forEach { c-> ListItem(headlineContent={Text(c.name)},supportingContent={Text(c.description ?: "Collection")},leadingContent={Icon(Icons.Default.CollectionsBookmark,null)},modifier=Modifier.clickable{onCollection(c.id)}) }
         Divider(color=Muted.copy(alpha=.2f))
-        Row(verticalAlignment=Alignment.CenterVertically){Text("Tags",fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f));TextButton(onClick=onCreateTag){Text("Add tag")}}
-        collections.take(0)
+        Row(verticalAlignment=Alignment.CenterVertically){Text("Tags",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick=onCreateTag){Text("Add tag")}}
         tags.forEach { t->Row(verticalAlignment=Alignment.CenterVertically){Text("#${t.name}",modifier=Modifier.weight(1f));IconButton(onClick={onDeleteTag(t)}){Icon(Icons.Default.Close,null)}}}
         Divider(color=Muted.copy(alpha=.2f))
         TextButton(onClick=onExport){Icon(Icons.Default.FileDownload,null);Spacer(Modifier.width(8.dp));Text("Export backup (JSON)")}
-        TextButton(onClick=onImport){Icon(Icons.Default.FileUpload,null);Spacer(Modifier.width(8.dp));Text("Import backup (JSON)")}
         TextButton(onClick=onImport){Icon(Icons.Default.FileUpload,null);Spacer(Modifier.width(8.dp));Text("Import backup (JSON)")}
         TextButton(onClick=onTrash){Icon(Icons.Default.DeleteSweep,null);Spacer(Modifier.width(8.dp));Text("Recently deleted")}
         if(trashMode) {
