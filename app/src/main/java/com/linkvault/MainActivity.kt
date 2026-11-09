@@ -213,6 +213,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var detailItem by remember { mutableStateOf<LinkItem?>(null) }
     var linkedNotes by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var addCollectionDialog by remember { mutableStateOf(false) }
+    var collectionToRename by remember { mutableStateOf<VaultCollection?>(null) }
     var addTagDialog by remember { mutableStateOf(false) }
     var trashMode by remember { mutableStateOf(false) }
     var sharedPrefill by remember { mutableStateOf("") }
@@ -308,6 +309,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     onDelete={cat->launchReload { api.deleteCategory(cat.id) }})
                 page==Page.More -> MorePage(tags,collections,trashed,trashMode,
                     onCreateCollection={addCollectionDialog=true}, onCreateTag={addTagDialog=true},
+                    onRenameCollection={collectionToRename=it}, onDeleteCollection={col->launchReload { api.deleteCollection(col.id) }},
                     onCollection={id->selectedCollection=id;page=Page.Home},
                     onTrash={trashMode=true;page=Page.More},
                     onRestore={item->launchReload { api.restoreItem(item.id) }},
@@ -357,6 +359,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     })
     if(categoryDialog) NameDialog("New category","Category name",onDismiss={categoryDialog=false},onSave={name->launchReload { api.createCategory(name); categoryDialog=false }})
     if(addCollectionDialog) NameDialog("New collection","Collection name",onDismiss={addCollectionDialog=false},onSave={name->launchReload { api.createCollection(name); addCollectionDialog=false }})
+    collectionToRename?.let { col -> NameDialog("Rename collection","Collection name",col.name,{collectionToRename=null},{name->launchReload { api.updateCollection(col.id,name,col.description ?: "");collectionToRename=null }}) }
     if(addTagDialog) NameDialog("New tag","Tag name",onDismiss={addTagDialog=false},onSave={name->launchReload { api.createTag(name); addTagDialog=false }})
     editItem?.let { item -> EditItemDialog(item,categories,onDismiss={editItem=null},onSave={title,desc,content,cat->
         launchReload { api.updateItem(item.id,buildJsonObject {
@@ -486,11 +489,11 @@ private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:
 }
 
 @Composable
-private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
+private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onRenameCollection:(VaultCollection)->Unit,onDeleteCollection:(VaultCollection)->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
     Column(Modifier.fillMaxSize()) {
         Text("Your spaces",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold)
         FilledTonalButton(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth(),shape=RoundedCornerShape(18.dp)) { Icon(Icons.Default.CreateNewFolder,null); Spacer(Modifier.width(8.dp)); Text("Create collection") }
-        collections.forEach { c-> ListItem(headlineContent={Text(c.name)},supportingContent={Text(c.description ?: "Collection")},leadingContent={Icon(Icons.Default.CollectionsBookmark,null)},modifier=Modifier.clickable{onCollection(c.id)}) }
+        collections.forEach { c -> Card(colors=CardDefaults.cardColors(containerColor=Panel),modifier=Modifier.fillMaxWidth().padding(vertical=3.dp)) { Row(Modifier.clickable{onCollection(c.id)}.padding(start=14.dp,end=4.dp,top=8.dp,bottom=8.dp),verticalAlignment=Alignment.CenterVertically) { Icon(Icons.Default.CollectionsBookmark,null,tint=Accent); Column(Modifier.weight(1f).padding(start=12.dp)) { Text(c.name,fontWeight=FontWeight.Medium); Text(c.description ?: "Collection",color=Muted,style=MaterialTheme.typography.bodySmall) }; IconButton(onClick={onRenameCollection(c)}) { Icon(Icons.Default.Edit,"Rename collection") }; IconButton(onClick={onDeleteCollection(c)}) { Icon(Icons.Default.Delete,"Delete collection",tint=Color(0xFFFF8A80)) } } } }
         Divider(color=Muted.copy(alpha=.2f))
         Row(verticalAlignment=Alignment.CenterVertically){Text("Tags",style=MaterialTheme.typography.titleMedium,fontWeight=FontWeight.Bold,modifier=Modifier.weight(1f));TextButton(onClick=onCreateTag){Text("Add tag")}}
         tags.forEach { t->Row(verticalAlignment=Alignment.CenterVertically){Text("#${t.name}",modifier=Modifier.weight(1f));IconButton(onClick={onDeleteTag(t)}){Icon(Icons.Default.Close,null)}}}
