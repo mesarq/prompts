@@ -39,10 +39,11 @@ class LinkVaultApi {
     private fun obj(block:JsonObjectBuilder.()->Unit)=buildJsonObject(block)
     private inline fun <reified T> array(p:JsonObject):List<T> = p["data"]?.let{apiJson.decodeFromJsonElement<List<T>>(it)} ?: emptyList()
     private inline fun <reified T> one(p:JsonObject):T=apiJson.decodeFromJsonElement(p["data"] ?: throw IllegalStateException("Missing response data"))
-    suspend fun listItems(q:String="",category:String?=null,favorite:Boolean=false,type:String?=null,collection:String?=null,trashed:Boolean=false):List<LinkItem>{
+    suspend fun listItems(q:String="",category:String?=null,favorite:Boolean=false,type:String?=null,collection:String?=null,trashed:Boolean=false,limit:Int?=null,offset:Int?=null):List<LinkItem>{
         if(trashed)return array(request(HttpMethod.Get,"/items/trash"))
         val p=mutableMapOf<String,String>();if(q.isNotBlank())p["q"]=q;category?.let{p["category_id"]=it}
         if(favorite)p["favorite"]="true";type?.let{p["type"]=it};collection?.let{p["collection_id"]=it}
+        limit?.let{p["limit"]=it.toString()};offset?.let{p["offset"]=it.toString()}
         return array(request(HttpMethod.Get,"/items",p))
     }
     suspend fun saveLink(url:String,categoryId:String?=null,collectionId:String?=null,tags:List<String> = emptyList())=one<LinkItem>(request(HttpMethod.Post,"/items",body=obj{
@@ -66,5 +67,6 @@ class LinkVaultApi {
     suspend fun deleteTag(id:String)=request(HttpMethod.Delete,"/tags/$id")
     suspend fun collections()=array<VaultCollection>(request(HttpMethod.Get,"/collections"))
     suspend fun createCollection(name:String,description:String="")=one<VaultCollection>(request(HttpMethod.Post,"/collections",body=obj{put("name",name);put("description",description)}))
+    suspend fun updateCollection(id:String,name:String,description:String="")=one<VaultCollection>(request(HttpMethod.Patch,"/collections/$id",body=obj{put("name",name);put("description",description)}))
     suspend fun deleteCollection(id:String)=request(HttpMethod.Delete,"/collections/$id")
 }
