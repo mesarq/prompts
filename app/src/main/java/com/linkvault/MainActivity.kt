@@ -47,6 +47,9 @@ import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonNull
 import java.util.UUID
 
@@ -230,7 +233,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
         val item = if (type == "note") LinkItem(id=id, type="note", title=title, content=value, category_id=categoryId, parent_item_id=parentId)
             else LinkItem(id=id, type="link", title=title.ifBlank { value }, url=value, category_id=categoryId, collection_id=collectionId)
         val payload = buildJsonObject {
-            put("type", type); put("title", title); put("category_id", categoryId ?: "")
+            put("type", type); put("title", title); categoryId?.let { put("category_id", it) }
             if (type == "note") { put("content", value); parentId?.let { put("parent_item_id", it) } }
             else { put("url", value); collectionId?.let { put("collection_id", it) } }
         }
@@ -263,7 +266,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     }
 
     suspend fun deleteItemResilient(item: LinkItem, restore: Boolean = false) {
-        try { if (restore) api.restoreItem(item.id) else api.deleteItem(item.id) }
+        try { if (restore) deleteItemResilient(item, restore=true) else api.deleteItem(item.id) }
         catch (e: Exception) {
             val timestamp = if (restore) JsonNull else kotlinx.serialization.json.JsonPrimitive(java.time.Instant.now().toString())
             val values = buildJsonObject { put("deleted_at", timestamp) }
@@ -394,7 +397,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     else LazyColumn(verticalArrangement=Arrangement.spacedBy(10.dp),contentPadding=PaddingValues(bottom=20.dp)) {
                         items(items,key={it.id}) { item ->
                             AnimatedVisibility(visible=true, enter=fadeIn() + slideInVertically(initialOffsetY={it/5})) {
-                            ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
+                            ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { updateItemResilient(item,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
                                 if(item.type=="note") readNote=item
                                 else {
                                     detailItem=item
@@ -413,11 +416,17 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
 
     if(addDialog) AddItemDialog(categories,collections,initialUrl=sharedPrefill,parentId=noteParentId,onDismiss={addDialog=false; noteParentId=null},onSave={type,title,value,cat,col,tagnames,parentId->
         launchReload {
-            val tagIds=tagnames.split(",").map{it.trim()}.filter{it.isNotEmpty()}.map { name ->
+            val tagIds=runCatching { tagnames.split(",").map{it.trim()}.filter{it.isNotEmpty()}.map { name ->
                 tags.firstOrNull{it.name.equals(name,true)}?.id ?: api.createTag(name).id
+            } }.getOrDefault(emptyList())
+            val saved = try {
+                if(type=="note") api.saveNote(title,value,cat,tagIds,parentId)
+                else api.saveLink(normalizeLink(value) ?: error("Enter a valid http or https URL."),cat,col,tagIds)
+            } catch (e: Exception) {
+                val normalized = if(type=="link") normalizeLink(value) ?: error("Enter a valid http or https URL.") else value
+                queueOfflineItem(type,title,normalized,cat,col,parentId)
             }
-            if(type=="note") api.saveNote(title,value,cat,tagIds,parentId)
-            else api.saveLink(normalizeLink(value) ?: error("Enter a valid http or https URL."),cat,col,tagIds)
+            items = (listOf(saved) + items).distinctBy { it.id }
             addDialog=false
         }
     })
@@ -426,12 +435,12 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     collectionToRename?.let { col -> NameDialog("Rename collection","Collection name",col.name,{collectionToRename=null},{name->launchReload { api.updateCollection(col.id,name,col.description ?: "");collectionToRename=null }}) }
     if(addTagDialog) NameDialog("New tag","Tag name",onDismiss={addTagDialog=false},onSave={name->launchReload { api.createTag(name); addTagDialog=false }})
     editItem?.let { item -> EditItemDialog(item,categories,onDismiss={editItem=null},onSave={title,desc,content,cat->
-        launchReload { api.updateItem(item.id,buildJsonObject {
+        launchReload { updateItemResilient(item,buildJsonObject {
             put("title",title);put("description",desc);put("content",content);cat?.let{put("category_id",it)}
         });editItem=null }
     }) }
     categoryItem?.let { item -> CategoryPicker(categories,item.category_id,onDismiss={categoryItem=null},onSelect={id->
-        launchReload { api.updateItem(item.id,buildJsonObject { id?.let{put("category_id",it)} }); categoryItem=null }
+        launchReload { updateItemResilient(item,buildJsonObject { if(id==null) put("category_id",JsonNull) else put("category_id",id) }); categoryItem=null }
     }) }
     readNote?.let { note ->
         AlertDialog(
@@ -488,7 +497,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                 if(item.type=="link") TextButton(onClick={noteParentId=item.id; addDialog=true; menuItem=null}) { Text("Add a note about this link") }
                 TextButton(onClick={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) });menuItem=null }}) { Text(if(item.is_favorite)"Remove favorite" else "Add to favorites") }
                 TextButton(onClick={launchReload {
-                    api.deleteItem(item.id);menuItem=null
+                    deleteItemResilient(item);menuItem=null
                     val result=snackbar.showSnackbar("Moved to Recently deleted",actionLabel="Undo")
                     if(result==SnackbarResult.ActionPerformed) api.restoreItem(item.id)
                     reload()
