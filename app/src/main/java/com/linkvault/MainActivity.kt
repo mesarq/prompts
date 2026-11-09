@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -172,6 +173,7 @@ private enum class Page { Home, Categories, Notes, Favorites, More }
 @Composable
 private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSignOut: () -> Unit) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     val scope = rememberCoroutineScope()
     val api = remember { LinkVaultApi() }
     var page by remember { mutableStateOf(Page.Home) }
@@ -352,7 +354,14 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             onDismissRequest={detailItem=null},
             title={Text(item.title ?: item.site_name ?: "Saved link", fontWeight=FontWeight.Bold)},
             text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                Text(item.url ?: "", color=Accent, style=MaterialTheme.typography.bodySmall)
+                item.url?.takeIf { it.isNotBlank() }?.let { url ->
+                    Text(
+                        text = url,
+                        color = Accent,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.fillMaxWidth().clickable { runCatching { uriHandler.openUri(url) } }
+                    )
+                }
                 item.description?.takeIf{it.isNotBlank()}?.let { Text(it,color=Muted) }
                 Divider(color=Muted.copy(alpha=.2f))
                 Text("Notes about this link",fontWeight=FontWeight.SemiBold)
