@@ -104,7 +104,7 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
                     if (c["operation"]?.jsonPrimitive?.contentOrNull == "delete") {
                         val type = c["entity_type"]?.jsonPrimitive?.contentOrNull ?: return@forEach
                         val id = c["entity_id"]?.jsonPrimitive?.contentOrNull ?: return@forEach
-                        dao.markDeleted(userId, type, id)
+                        if (!dao.hasPendingEntity(userId, type, id)) dao.markDeleted(userId, type, id)
                     }
                 }
             }
@@ -125,6 +125,7 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
         dao.putRecords(array.mapNotNull { value ->
             val obj = value.jsonObject
             val id = obj["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            if (dao.hasPendingEntity(userId, type, id)) return@mapNotNull null
             VaultRecordEntity(userId, type, id, value.toString(), false, System.currentTimeMillis())
         })
     }
