@@ -69,6 +69,12 @@ interface LocalVaultDao {
     @Query("DELETE FROM vault_records WHERE userId = :userId")
     suspend fun clearRecords(userId: String)
 
+    @Query("DELETE FROM vault_records WHERE userId = :userId AND recordType = :type")
+    suspend fun clearRecordType(userId: String, type: String)
+
+    @Query("UPDATE vault_records SET deleted = 1, updatedAt = :updatedAt WHERE userId = :userId AND recordType = :type AND recordId = :id")
+    suspend fun markDeleted(userId: String, type: String, id: String, updatedAt: Long = System.currentTimeMillis())
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun enqueue(operation: SyncOutboxEntity)
 
