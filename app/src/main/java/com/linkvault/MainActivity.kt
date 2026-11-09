@@ -69,7 +69,11 @@ class MainActivity : ComponentActivity() {
                 when {
                     !authReady -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
                     signedIn -> VaultScreen(sharedText, { sharedText = null }, {
-                        lifecycleScope.launch { Supabase.client.auth.signOut(); signedIn = false }
+                        lifecycleScope.launch {
+                            Supabase.client.auth.signOut()
+                            getSharedPreferences("linkvault-cache", MODE_PRIVATE).edit().clear().apply()
+                            signedIn = false
+                        }
                     })
                     else -> AuthScreen { signedIn = true }
                 }
@@ -200,6 +204,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var addDialog by remember { mutableStateOf(false) }
     var categoryDialog by remember { mutableStateOf(false) }
     var editItem by remember { mutableStateOf<LinkItem?>(null) }
+    var readNote by remember { mutableStateOf<LinkItem?>(null) }
     var categoryItem by remember { mutableStateOf<LinkItem?>(null) }
     var menuItem by remember { mutableStateOf<LinkItem?>(null) }
     var detailItem by remember { mutableStateOf<LinkItem?>(null) }
@@ -230,7 +235,6 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
             message = e.message ?: "Couldn't refresh. Showing saved offline copy."
         } finally { busy=false }
     }
-    LaunchedEffect(Unit) { reload() }
     LaunchedEffect(page, selectedCategory, selectedCollection, query, trashMode) { reload() }
     LaunchedEffect(sharedText) {
         if (!sharedText.isNullOrBlank()) { val url=normalizeLink(sharedText); if(url!=null) { sharedPrefill=url; addDialog=true; message="Shared link received."; }; onSharedConsumed() }
@@ -322,7 +326,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                         items(items,key={it.id}) { item ->
                             AnimatedVisibility(visible=true, enter=fadeIn() + slideInVertically(initialOffsetY={it/5})) {
                             ItemCard(item, categories, collections, onMenu={menuItem=item}, onFavorite={launchReload { api.updateItem(item.id,buildJsonObject { put("is_favorite",!item.is_favorite) }) }}, onOpen={
-                                if(item.type=="note") editItem=item
+                                if(item.type=="note") readNote=item
                                 else {
                                     detailItem=item
                                     scope.launch {
@@ -359,6 +363,22 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     categoryItem?.let { item -> CategoryPicker(categories,item.category_id,onDismiss={categoryItem=null},onSelect={id->
         launchReload { api.updateItem(item.id,buildJsonObject { id?.let{put("category_id",it)} }); categoryItem=null }
     }) }
+    readNote?.let { note ->
+        AlertDialog(
+            onDismissRequest={readNote=null},
+            title={Text(note.title?.takeIf { it.isNotBlank() } ?: "Note", fontWeight=FontWeight.Bold)},
+            text={Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
+                Text(note.content?.takeIf { it.isNotBlank() } ?: "This note is empty.", style=MaterialTheme.typography.bodyLarge)
+                note.parent_item_id?.let { parentId ->
+                    items.firstOrNull { it.id==parentId }?.url?.let { url ->
+                        Text("Attached to: $url",color=Accent,style=MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }},
+            confirmButton={TextButton(onClick={editItem=note;readNote=null}) { Text("Edit") }},
+            dismissButton={TextButton(onClick={readNote=null}) { Text("Close") }}
+        )
+    }
     detailItem?.let { item ->
         AlertDialog(
             onDismissRequest={detailItem=null},
@@ -377,7 +397,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                 Text("Notes about this link",fontWeight=FontWeight.SemiBold)
                 if(linkedNotes.isEmpty()) Text("No notes yet. Add one from here or the link menu.",color=Muted)
                 linkedNotes.forEach { note ->
-                    Card(colors=CardDefaults.cardColors(containerColor=Ink),modifier=Modifier.fillMaxWidth().clickable { editItem=note; detailItem=null }) {
+                    Card(colors=CardDefaults.cardColors(containerColor=Ink),modifier=Modifier.fillMaxWidth().clickable { readNote=note }) {
                         Column(Modifier.padding(12.dp)) {
                             Text(note.title?.takeIf{it.isNotBlank()} ?: "Untitled note",fontWeight=FontWeight.SemiBold)
                             Text(note.content ?: "",color=Muted,maxLines=5)
