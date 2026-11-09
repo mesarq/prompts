@@ -90,6 +90,9 @@ interface LocalVaultDao {
     @Query("SELECT COUNT(*) FROM sync_outbox WHERE userId = :userId")
     fun observePendingCount(userId: String): Flow<Int>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM sync_outbox WHERE userId = :userId AND entity = :entity AND entityId = :id)")
+    suspend fun hasPendingEntity(userId: String, entity: String, id: String): Boolean
+
     @Query("SELECT * FROM sync_state WHERE userId = :userId")
     suspend fun syncState(userId: String): SyncStateEntity?
 
