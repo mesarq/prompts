@@ -22,7 +22,7 @@
             <intent-filter android:label="Save to LinkVault" android:icon="@drawable/ic_launcher">
                 <action android:name="android.intent.action.SEND_MULTIPLE" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/*" />
             </intent-filter>
             <intent-filter android:label="Open with LinkVault" android:icon="@drawable/ic_launcher">
                 <action android:name="android.intent.action.VIEW" />
