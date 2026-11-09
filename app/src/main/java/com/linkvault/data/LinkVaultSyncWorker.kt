@@ -92,10 +92,6 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
             val data = pulled["data"]?.jsonObject ?: error("Sync response missing data")
             val full = data["full_sync"]?.jsonPrimitive?.booleanOrNull == true
             if (full) {
-                dao.clearRecordType(userId, "item")
-                dao.clearRecordType(userId, "category")
-                dao.clearRecordType(userId, "tag")
-                dao.clearRecordType(userId, "collection")
             }
             saveArray(userId, "item", data["items"]?.jsonArray, dao)
             saveArray(userId, "category", data["categories"]?.jsonArray, dao)
@@ -115,11 +111,12 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
             cursor = data["cursor"]?.jsonPrimitive?.contentOrNull ?: state.cursor
             val hasMore = data["has_more"]?.jsonPrimitive?.booleanOrNull == true
             val truncated = data["truncated"]?.jsonPrimitive?.booleanOrNull == true
-            state = SyncStateEntity(userId, cursor ?: state.cursor, System.currentTimeMillis(), true)
+            state = SyncStateEntity(userId, if (full && truncated) "0" else (cursor ?: state.cursor), System.currentTimeMillis(), !truncated || !full)
             dao.saveSyncState(state)
             pages++
             continuePull = if (full) true else hasMore
             if (truncated) error("Initial sync is larger than the current snapshot page; refusing to advance past missing records")
+            if (pages >= 20 && continuePull) error("Sync page limit reached; continuing on next background attempt")
         } while (continuePull && pages < 20)
     }
 
