@@ -199,8 +199,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     val api = remember { LinkVaultApi() }
     val offlineStore = remember { OfflineStore(context) }
     val localDao = remember { LocalDatabase.get(context).vaultDao() }
-    val pendingSyncCount by localDao.observePendingCount(cacheUserId).collectAsState(initial = 0)
     val cacheUserId = Supabase.client.auth.currentSessionOrNull()?.user?.id ?: "signed-out"
+    val pendingSyncCount by localDao.observePendingCount(cacheUserId).collectAsState(initial = 0)
     var page by remember { mutableStateOf(Page.Home) }
     var items by remember { mutableStateOf<List<LinkItem>>(emptyList()) }
     var categories by remember { mutableStateOf<List<Category>>(emptyList()) }
