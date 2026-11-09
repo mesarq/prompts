@@ -73,6 +73,7 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
         var state = dao.syncState(userId) ?: SyncStateEntity(userId)
         var cursor = if (state.fullSyncComplete) state.cursor else null
         var pages = 0
+        var continuePull: Boolean
         do {
             val pulled: JsonObject = Supabase.http.get("$base/pull") {
                 header(HttpHeaders.Authorization, "Bearer $token")
@@ -105,14 +106,13 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
             }
             cursor = data["cursor"]?.jsonPrimitive?.contentOrNull ?: state.cursor
             val hasMore = data["has_more"]?.jsonPrimitive?.booleanOrNull == true
-            state = SyncStateEntity(userId, cursor, System.currentTimeMillis(), true)
+            val truncated = data["truncated"]?.jsonPrimitive?.booleanOrNull == true
+            state = SyncStateEntity(userId, cursor ?: state.cursor, System.currentTimeMillis(), true)
             dao.saveSyncState(state)
             pages++
-            if (full && data["truncated"]?.jsonPrimitive?.booleanOrNull == true) break
-        } while (cursor != null && pages < 20 && run {
-            // The endpoint reports has_more for incremental pages. A full snapshot is one page.
-            true
-        } && pages > 0 && false)
+            continuePull = if (full) truncated else hasMore
+            if (truncated) error("Initial sync is larger than the current snapshot page; refusing to advance past missing records")
+        } while (continuePull && pages < 20)
     }
 
     private suspend fun saveArray(userId: String, type: String, array: JsonArray?, dao: LocalVaultDao) {
