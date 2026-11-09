@@ -12,6 +12,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import coil.compose.AsyncImage
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -152,6 +155,20 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var menuItem by remember { mutableStateOf<LinkItem?>(null) }
     var addCollectionDialog by remember { mutableStateOf(false) }
     var addTagDialog by remember { mutableStateOf(false) }
+    var importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Cannot read backup file")
+                val backup = Json.decodeFromString<List<LinkItem>>(raw)
+                backup.forEach { saved ->
+                    if (saved.type == "note") api.saveNote(saved.title ?: "Imported note", saved.content ?: "", saved.category_id)
+                    else saved.url?.let { api.saveLink(it, saved.category_id, saved.collection_id) }
+                }
+                reload()
+                message = "Imported ${backup.size} items."
+            }.onFailure { message = it.message ?: "Backup import failed." }
+        }
+    }
     var trashMode by remember { mutableStateOf(false) }
     var sharedPrefill by remember { mutableStateOf("") }
     var noteParentId by remember { mutableStateOf<String?>(null) }
@@ -234,7 +251,8 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                         val send=Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_TEXT,text)
                         context.startActivity(Intent.createChooser(send,"Export LinkVault backup"))
                     },
-                    onDeleteTag={tag->launchReload { api.deleteTag(tag.id) }})
+                    onImport={ importLauncher.launch("application/json") },
+                    onDeleteTag={tag->launchReload { api.deleteTag(tag.id) }}, onImport={ importLauncher.launch("application/json") })
                 else -> {
                     Row(Modifier.fillMaxWidth().padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
                         Text(when { trashMode->"Recently deleted"; page==Page.Notes->"Your notes";page==Page.Favorites->"Favorites";else->"Recently saved" },fontWeight=FontWeight.SemiBold,modifier=Modifier.weight(1f))
@@ -300,6 +318,10 @@ private fun ItemCard(item:LinkItem,categories:List<Category>,collections:List<Va
     val category=categories.firstOrNull{it.id==item.category_id}?.name ?: "Uncategorized"
     Card(colors=CardDefaults.cardColors(containerColor=Panel),shape=RoundedCornerShape(16.dp),modifier=Modifier.fillMaxWidth().clickable{onOpen()}) {
         Column(Modifier.padding(14.dp)) {
+            if(!item.thumbnail_url.isNullOrBlank()) {
+                AsyncImage(model=item.thumbnail_url,contentDescription="Link preview",modifier=Modifier.fillMaxWidth().height(148.dp),contentScale=androidx.compose.ui.layout.ContentScale.Crop)
+                Spacer(Modifier.height(10.dp))
+            }
             Row(verticalAlignment=Alignment.CenterVertically) {
                 Icon(if(item.type=="note") Icons.Default.Description else Icons.Default.Language,null,tint=Accent)
                 Spacer(Modifier.width(10.dp))
@@ -345,7 +367,7 @@ private fun CategoriesPage(categories:List<Category>,items:List<LinkItem>,onAdd:
 }
 
 @Composable
-private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit) {
+private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:List<LinkItem>,trashMode:Boolean,onCreateCollection:()->Unit,onCreateTag:()->Unit,onCollection:(String)->Unit,onTrash:()->Unit,onRestore:(LinkItem)->Unit,onDeleteForever:(LinkItem)->Unit,onExport:()->Unit,onDeleteTag:(Tag)->Unit,onImport:()->Unit) {
     Column(Modifier.fillMaxSize()) {
         Text("Collections",fontWeight=FontWeight.SemiBold)
         Button(onClick=onCreateCollection,modifier=Modifier.fillMaxWidth()) { Text("Create collection") }
@@ -356,6 +378,8 @@ private fun MorePage(tags:List<Tag>,collections:List<VaultCollection>,trashed:Li
         tags.forEach { t->Row(verticalAlignment=Alignment.CenterVertically){Text("#${t.name}",modifier=Modifier.weight(1f));IconButton(onClick={onDeleteTag(t)}){Icon(Icons.Default.Close,null)}}}
         Divider(color=Muted.copy(alpha=.2f))
         TextButton(onClick=onExport){Icon(Icons.Default.FileDownload,null);Spacer(Modifier.width(8.dp));Text("Export backup (JSON)")}
+        TextButton(onClick=onImport){Icon(Icons.Default.FileUpload,null);Spacer(Modifier.width(8.dp));Text("Import backup (JSON)")}
+        TextButton(onClick=onImport){Icon(Icons.Default.FileUpload,null);Spacer(Modifier.width(8.dp));Text("Import backup (JSON)")}
         TextButton(onClick=onTrash){Icon(Icons.Default.DeleteSweep,null);Spacer(Modifier.width(8.dp));Text("Recently deleted")}
         if(trashMode) {
             Text("Recently deleted",fontWeight=FontWeight.SemiBold)
@@ -385,7 +409,7 @@ private fun AddItemDialog(categories:List<Category>,collections:List<VaultCollec
         text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
             Row { FilterChip(selected=type=="link",onClick={type="link"},label={Text("Link")});Spacer(Modifier.width(8.dp));FilterChip(selected=type=="note",onClick={type="note"},label={Text("Note")}) }
             OutlinedTextField(title,{title=it},label={Text("Title")},singleLine=true,modifier=Modifier.fillMaxWidth())
-            OutlinedTextField(value,{value=it},label={Text(if(type=="note")"Write your note" else "URL")},modifier=Modifier.fillMaxWidth(),minLines=if(type=="note")4 else 1)
+            OutlinedTextField(value,{value=it},label={Text(if(type=="note")"Write your note" else "URL")},modifier=Modifier.fillMaxWidth(),minLines=if(type=="note")6 else 1,maxLines=if(type=="note")12 else 2)
             var expanded by remember { mutableStateOf(false) }
             Box { OutlinedButton(onClick={expanded=true}){Text(categories.firstOrNull{it.id==category}?.name ?: "Uncategorized")};DropdownMenu(expanded,{expanded=false}){categories.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={category=c.id;expanded=false})}}}
             if(type=="link" && collections.isNotEmpty()) {
@@ -405,7 +429,7 @@ private fun EditItemDialog(item:LinkItem,categories:List<Category>,onDismiss:()-
     AlertDialog(onDismissRequest=onDismiss,title={Text("Edit item")},text={Column(verticalArrangement=Arrangement.spacedBy(8.dp)){
         OutlinedTextField(title,{title=it},label={Text("Title")})
         OutlinedTextField(desc,{desc=it},label={Text("Description")})
-        if(item.type=="note") OutlinedTextField(content,{content=it},label={Text("Note")},minLines=4)
+        if(item.type=="note") OutlinedTextField(content,{content=it},label={Text("Note")},minLines=6,maxLines=16)
         var exp by remember{mutableStateOf(false)}
         Box{OutlinedButton(onClick={exp=true}){Text(categories.firstOrNull{it.id==cat}?.name ?: "Category")};DropdownMenu(exp,{exp=false}){categories.forEach{c->DropdownMenuItem(text={Text(c.name)},onClick={cat=c.id;exp=false})}}}
     }},confirmButton={TextButton(onClick={onSave(title,desc,content,cat)} ){Text("Save")}},dismissButton={TextButton(onClick=onDismiss){Text("Cancel")}})

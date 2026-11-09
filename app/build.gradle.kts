@@ -11,8 +11,8 @@ android {
         applicationId = "com.linkvault"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.2.0"
+        versionCode = 5
+        versionName = "0.3.0"
         buildConfigField("String", "SUPABASE_URL", "\"https://fqlmomsdzdqzamykogqm.supabase.co\"")
         buildConfigField("String", "SUPABASE_PUBLISHABLE_KEY", "\"sb_publishable_8ov5Cc7oyr-hBMdg3Innwg_Lk15sHK7\"")
     }
@@ -32,6 +32,7 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
+    implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
