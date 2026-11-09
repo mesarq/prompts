@@ -80,8 +80,9 @@ class MainActivity : ComponentActivity() {
                     !authReady -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = Accent) }
                     signedIn -> VaultScreen(sharedText, { sharedText = null }, {
                         lifecycleScope.launch {
+                            val previousUserId = Supabase.client.auth.currentSessionOrNull()?.user?.id
                             Supabase.client.auth.signOut()
-                            Supabase.client.auth.currentSessionOrNull()?.user?.id?.let { OfflineStore(this@MainActivity).apply { clearUser(it); close() } }
+                            previousUserId?.let { OfflineStore(this@MainActivity).apply { clearUser(it); close() } }
                             signedIn = false
                         }
                     })
@@ -270,8 +271,9 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     }
 
     suspend fun deleteItemResilient(item: LinkItem, restore: Boolean = false) {
-        try { if (restore) deleteItemResilient(item, restore=true) else api.deleteItem(item.id) }
-        catch (e: Exception) {
+        try {
+            if (restore) api.restoreItem(item.id) else api.deleteItem(item.id)
+        } catch (e: Exception) {
             val timestamp = if (restore) JsonNull else kotlinx.serialization.json.JsonPrimitive(java.time.Instant.now().toString())
             val values = buildJsonObject { put("deleted_at", timestamp) }
             val updated = item.copy(deleted_at = if (restore) null else java.time.Instant.now().toString())
@@ -380,7 +382,7 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                     onRenameCollection={collectionToRename=it}, onDeleteCollection={col->launchReload { api.deleteCollection(col.id) }},
                     onCollection={id->selectedCollection=id;page=Page.Home},
                     onTrash={trashMode=true;page=Page.More},
-                    onRestore={item->launchReload { api.restoreItem(item.id) }},
+                    onRestore={item->launchReload { deleteItemResilient(item, restore=true) }},
                     onDeleteForever={item->launchReload { api.deleteForever(item.id) }},
                     onExport={
                         val text=Json.encodeToString(items)
