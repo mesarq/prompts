@@ -81,14 +81,17 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
     private suspend fun pullChanges(userId: String, token: String, dao: LocalVaultDao) {
         var state = dao.syncState(userId) ?: SyncStateEntity(userId)
         var cursor = if (state.fullSyncComplete) state.cursor else null
+        var snapshotOffset = if (!state.fullSyncComplete && state.cursor.startsWith("snapshot:"))
+            state.cursor.removePrefix("snapshot:").toIntOrNull() ?: 0 else 0
         var pages = 0
         var continuePull: Boolean
         do {
             val pulled: JsonObject = Supabase.http.get("$base/pull") {
                 header(HttpHeaders.Authorization, "Bearer $token")
                 header("apikey", com.linkvault.BuildConfig.SUPABASE_PUBLISHABLE_KEY)
-                parameter("limit", "250")
+                parameter("limit", "500")
                 cursor?.let { parameter("cursor", it) }
+                if (cursor == null) parameter("offset", snapshotOffset.toString())
             }.body()
             val data = pulled["data"]?.jsonObject ?: error("Sync response missing data")
             val full = data["full_sync"]?.jsonPrimitive?.booleanOrNull == true
@@ -112,11 +115,12 @@ class LinkVaultSyncWorker(appContext: Context, params: WorkerParameters) : Corou
             cursor = data["cursor"]?.jsonPrimitive?.contentOrNull ?: state.cursor
             val hasMore = data["has_more"]?.jsonPrimitive?.booleanOrNull == true
             val truncated = data["truncated"]?.jsonPrimitive?.booleanOrNull == true
-            state = SyncStateEntity(userId, if (full && truncated) "0" else (cursor ?: state.cursor), System.currentTimeMillis(), !truncated || !full)
+            if (full) snapshotOffset = data["next_offset"]?.jsonPrimitive?.intOrNull ?: snapshotOffset
+            val savedCursor = if (full && truncated) "snapshot:$snapshotOffset" else (cursor ?: state.cursor)
+            state = SyncStateEntity(userId, savedCursor, System.currentTimeMillis(), !truncated || !full)
             dao.saveSyncState(state)
             pages++
-            continuePull = if (full) true else hasMore
-            if (truncated) error("Initial sync is larger than the current snapshot page; refusing to advance past missing records")
+            continuePull = if (full) truncated else hasMore
             if (pages >= 20 && continuePull) error("Sync page limit reached; continuing on next background attempt")
         } while (continuePull && pages < 20)
     }
