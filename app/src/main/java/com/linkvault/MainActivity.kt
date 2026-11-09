@@ -155,20 +155,6 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     var menuItem by remember { mutableStateOf<LinkItem?>(null) }
     var addCollectionDialog by remember { mutableStateOf(false) }
     var addTagDialog by remember { mutableStateOf(false) }
-    var importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) scope.launch {
-            runCatching {
-                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Cannot read backup file")
-                val backup = Json.decodeFromString<List<LinkItem>>(raw)
-                backup.forEach { saved ->
-                    if (saved.type == "note") api.saveNote(saved.title ?: "Imported note", saved.content ?: "", saved.category_id)
-                    else saved.url?.let { api.saveLink(it, saved.category_id, saved.collection_id) }
-                }
-                reload()
-                message = "Imported ${backup.size} items."
-            }.onFailure { message = it.message ?: "Backup import failed." }
-        }
-    }
     var trashMode by remember { mutableStateOf(false) }
     var sharedPrefill by remember { mutableStateOf("") }
     var noteParentId by remember { mutableStateOf<String?>(null) }
@@ -197,6 +183,21 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
     LaunchedEffect(page, selectedCategory, selectedCollection, query, trashMode) { reload() }
     LaunchedEffect(sharedText) {
         if (!sharedText.isNullOrBlank()) { val url=normalizeLink(sharedText); if(url!=null) { sharedPrefill=url; addDialog=true; message="Shared link received."; }; onSharedConsumed() }
+    }
+
+    var importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) scope.launch {
+            runCatching {
+                val raw = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("Cannot read backup file")
+                val backup = Json.decodeFromString<List<LinkItem>>(raw)
+                backup.forEach { saved ->
+                    if (saved.type == "note") api.saveNote(saved.title ?: "Imported note", saved.content ?: "", saved.category_id)
+                    else saved.url?.let { api.saveLink(it, saved.category_id, saved.collection_id) }
+                }
+                reload()
+                message = "Imported ${backup.size} items."
+            }.onFailure { message = it.message ?: "Backup import failed." }
+        }
     }
 
     fun launchReload(block: suspend () -> Unit) { scope.launch { busy=true; try { block(); reload() } catch(e:Exception) { message=e.message ?: "Action failed." } finally { busy=false } } }
@@ -251,7 +252,6 @@ private fun VaultScreen(sharedText: String?, onSharedConsumed: () -> Unit, onSig
                         val send=Intent(Intent.ACTION_SEND).setType("application/json").putExtra(Intent.EXTRA_TEXT,text)
                         context.startActivity(Intent.createChooser(send,"Export LinkVault backup"))
                     },
-                    onImport={ importLauncher.launch("application/json") },
                     onDeleteTag={tag->launchReload { api.deleteTag(tag.id) }}, onImport={ importLauncher.launch("application/json") })
                 else -> {
                     Row(Modifier.fillMaxWidth().padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
