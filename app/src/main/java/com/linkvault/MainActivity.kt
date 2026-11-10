@@ -172,7 +172,7 @@ private suspend fun fetchSharedPageTitle(url: String): String? {
         }.bodyAsText()
     }.getOrNull().orEmpty()
 
-    val metaTags = Regex("<meta\\\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(html).map { it.value }
+    val metaTags = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(html).map { it.value }
     val ogTitle = metaTags.firstNotNullOfOrNull { tag ->
         val property = Regex("""(?:property|name)\\s*=\\s*["'](?:og:title|twitter:title)["']""", RegexOption.IGNORE_CASE)
         val content = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
