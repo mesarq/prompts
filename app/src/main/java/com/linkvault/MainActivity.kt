@@ -48,6 +48,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.jsonPrimitive
@@ -135,35 +136,52 @@ class MainActivity : ComponentActivity() {
 }
 
 private suspend fun fetchSharedPageTitle(url: String): String? {
-    val host = Uri.parse(url).host.orEmpty().lowercase()
+    val uri = Uri.parse(url)
+    val host = uri.host.orEmpty().lowercase()
     if (host != "reddit.com" && !host.endsWith(".reddit.com")) return null
-    val embedTitle = runCatching {
-        val response = Supabase.http.get("https://www.reddit.com/oembed?url=${Uri.encode(url)}&format=json") {
-            header("User-Agent", "LinkVault/0.9 (Android)")
-            header("Accept", "application/json")
-        }.bodyAsText()
-        Json.parseToJsonElement(response).jsonObject["title"]?.jsonPrimitive?.contentOrNull
-    }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-    if (!embedTitle.isNullOrBlank()) return embedTitle
+
+    fun usableTitle(value: String?): String? {
+        val title = value?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString() }
+            ?.replace(Regex("\\s+"), " ")?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val generic = setOf("reddit", "reddit.com", "reddit - dive into anything", "dive into anything")
+        return title.takeUnless { it.lowercase() in generic || it.lowercase().startsWith("reddit - ") }
+    }
+
+    // Reddit's oEmbed endpoint can return the generic site name. Fetch the post JSON instead.
+    val postId = Regex("/comments/([a-z0-9]+)", RegexOption.IGNORE_CASE)
+        .find(uri.path.orEmpty())?.groupValues?.getOrNull(1)
+    if (postId != null) {
+        val jsonTitle = runCatching {
+            val body = Supabase.http.get("https://www.reddit.com/comments/$postId.json?raw_json=1") {
+                header("User-Agent", "android:com.linkvault.app:v0.9.1 (by /u/linkvault)")
+                header("Accept", "application/json")
+            }.bodyAsText()
+            val root = Json.parseToJsonElement(body).jsonArray
+            root.firstOrNull()?.jsonObject?.get("data")?.jsonObject
+                ?.get("children")?.let { it as? kotlinx.serialization.json.JsonArray }
+                ?.firstOrNull()?.jsonObject?.get("data")?.jsonObject
+                ?.get("title")?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
+        usableTitle(jsonTitle)?.let { return it }
+    }
+
     val html = runCatching {
         Supabase.http.get(url) {
-            header("User-Agent", "LinkVault/0.9 (Android)")
+            header("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
             header("Accept", "text/html,application/xhtml+xml")
         }.bodyAsText()
     }.getOrNull().orEmpty()
-    val patterns = listOf(
-        Regex("<meta[^>]+property=[\\\"']og:title[\\\"'][^>]+content=[\\\"']([^\\\"']+)[\\\"']", RegexOption.IGNORE_CASE),
-        Regex("<meta[^>]+content=[\\\"']([^\\\"']+)[\\\"'][^>]+property=[\\\"']og:title[\\\"']", RegexOption.IGNORE_CASE),
-        Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-    )
-    val raw = patterns.firstNotNullOfOrNull { it.find(html)?.groupValues?.getOrNull(1) }
-        ?.replace(Regex("\\s+"), " ")?.trim()
-    val decoded = raw?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_COMPACT).toString().trim() }
-    return decoded?.replace(Regex("""\s*:\s*r/[^ ]+$""", RegexOption.IGNORE_CASE), "")?.takeIf {
-        it.isNotBlank() && !it.equals("reddit - dive into anything", ignoreCase = true)
-    }
-}
 
+    val metaTags = Regex("<meta\\\\b[^>]*>", RegexOption.IGNORE_CASE).findAll(html).map { it.value }
+    val ogTitle = metaTags.firstNotNullOfOrNull { tag ->
+        val property = Regex("""(?:property|name)\\s*=\\s*["'](?:og:title|twitter:title)["']""", RegexOption.IGNORE_CASE)
+        val content = Regex("""content\\s*=\\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        if (property.containsMatchIn(tag)) content.find(tag)?.groupValues?.getOrNull(1) else null
+    }
+    val pageTitle = Regex("<title[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(html)?.groupValues?.getOrNull(1)
+    return usableTitle(ogTitle ?: pageTitle)
+}
 private fun normalizeLink(raw: String): String? {
     val text = raw.trim()
     val extracted = Regex("https?://[^\\s<>\\\"']+", RegexOption.IGNORE_CASE).find(text)?.value?.trimEnd('.', ',', ')', ']', '!', '?')
@@ -200,6 +218,7 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
     var email by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }; var busy by remember { mutableStateOf(false) }
     var create by remember { mutableStateOf(false) }
+    var passwordVisible by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(PanelRaised, Ink, Ink))).padding(24.dp), verticalArrangement = Arrangement.Center) {
         Surface(shape=RoundedCornerShape(20.dp),color=Accent.copy(alpha=.14f)) { Icon(Icons.Default.Bookmarks, null, tint = Accent, modifier = Modifier.padding(14.dp).size(34.dp)) }
         Spacer(Modifier.height(18.dp))
@@ -208,8 +227,24 @@ private fun AuthScreen(onSignedIn: () -> Unit) {
         Spacer(Modifier.height(28.dp))
         OutlinedTextField(email, { email = it }, label = { Text("Email") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password))
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None
+                else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+            trailingIcon = {
+                IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                    Icon(
+                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                    )
+                }
+            }
+        )
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         Spacer(Modifier.height(18.dp))
         Button(onClick = { scope.launch {
